@@ -892,6 +892,10 @@ mup cluster reload prod-rs --parameter slowOpThresholdMs=200
 
 ## Technical Decisions
 
+### Project structure and inspiration
+- Should come from tiup by Pingcap for TiDB
+- Consult https://github.com/pingcap/tiup for code implementations
+
 ### Why YAML for State?
 - Human-readable and editable
 - Git-friendly for version control

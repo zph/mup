@@ -1,0 +1,22 @@
+# Example: 3-node replica set topology
+# This file defines a simple replica set for testing
+
+global:
+  user: mongodb
+  deploy_dir: /opt/mongodb
+  data_dir: /data/mongodb
+  log_dir: /var/log/mongodb
+  config_dir: /etc/mongodb
+
+mongod_servers:
+  - host: localhost
+    port: 0  # Auto-allocated for local deployment
+    replica_set: rs0
+
+  - host: localhost
+    port: 0  # Auto-allocated
+    replica_set: rs0
+
+  - host: localhost
+    port: 0  # Auto-allocated
+    replica_set: rs0

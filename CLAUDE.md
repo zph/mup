@@ -111,6 +111,9 @@ When modifying cluster state:
 4. Call `SaveState()` immediately
 5. State is JSON (uses Go json tags), not YAML
 
+### Templating and Interpolation
+1. Any interpolation of a string that's more than one line MUST use golang templates
+
 ### Binary Output Location
 All compiled binaries go to `./bin/` (gitignored). Never output to project root or `cmd/` directory.
 
@@ -119,6 +122,7 @@ All compiled binaries go to `./bin/` (gitignored). Never output to project root 
 - **docs/DESIGN.md** - Comprehensive architectural design and technical decisions
 - **docs/TODO.md** - Detailed implementation roadmap with all planned commands and features organized by phase
 - **README.md** - User-facing documentation and quick start guide
+- New markdown files MUST go in docs/
 
 ## Future Architecture
 

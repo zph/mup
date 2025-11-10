@@ -1,0 +1,13 @@
+# Example: Standalone MongoDB instance
+# Simplest possible topology for testing
+
+global:
+  user: mongodb
+  deploy_dir: /opt/mongodb
+  data_dir: /data/mongodb
+  log_dir: /var/log/mongodb
+  config_dir: /etc/mongodb
+
+mongod_servers:
+  - host: localhost
+    port: 0  # Auto-allocated for local deployment
