@@ -2,7 +2,9 @@ package topology
 
 import (
 	"fmt"
+	"net"
 	"sort"
+	"time"
 )
 
 const (
@@ -176,53 +178,134 @@ func (pa *PortAllocator) GetAllocatedPorts() []int {
 }
 
 // AllocatePortsForTopology allocates ports for all nodes in a local topology
+// It finds a contiguous block of available ports to ensure all can be allocated
+// Tries 10 times, incrementing base port by 20 each time
 func AllocatePortsForTopology(topo *Topology, checker PortChecker) error {
 	if !topo.IsLocalDeployment() {
 		return fmt.Errorf("port allocation is only for local deployments")
 	}
 
-	var allocator *PortAllocator
-	if checker != nil {
-		allocator = NewPortAllocatorWithChecker(DefaultBasePort, checker)
-	} else {
-		allocator = NewPortAllocator(DefaultBasePort)
+	// Count how many ports we need
+	portsNeeded := 0
+	for _, node := range topo.Mongod {
+		if node.Port == 0 {
+			portsNeeded++
+		}
+	}
+	for _, node := range topo.Mongos {
+		if node.Port == 0 {
+			portsNeeded++
+		}
+	}
+	for _, node := range topo.ConfigSvr {
+		if node.Port == 0 {
+			portsNeeded++
+		}
+	}
+
+	if portsNeeded == 0 {
+		return nil // No ports need allocation
+	}
+
+	// Try to find contiguous available ports
+	// Try 10 times, incrementing by 100 each time
+	const maxAttempts = 10
+	const portIncrement = 100
+
+	var basePort int
+	var allocatedPorts []int
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		tryBase := DefaultBasePort + (attempt * portIncrement)
+
+		// Check if all ports in this range are available
+		ports := make([]int, portsNeeded)
+		allAvailable := true
+
+		for i := 0; i < portsNeeded; i++ {
+			port := tryBase + i
+			ports[i] = port
+
+			if !isPortAvailable(port) {
+				allAvailable = false
+				break
+			}
+		}
+
+		if allAvailable {
+			basePort = tryBase
+			allocatedPorts = ports
+			break
+		}
+
+		// Small delay before next attempt
+		if attempt < maxAttempts-1 {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if len(allocatedPorts) == 0 {
+		return fmt.Errorf("failed to find %d contiguous available ports after %d attempts", portsNeeded, maxAttempts)
+	}
+
+	fmt.Printf("Found contiguous port range: %d-%d\n", basePort, basePort+portsNeeded-1)
+
+	// Allocate ports sequentially from the range
+	portIndex := 0
+
+	// Allocate ports for config servers FIRST (they need to be initialized before mongos)
+	for i := range topo.ConfigSvr {
+		node := &topo.ConfigSvr[i]
+		if node.Port == 0 {
+			node.Port = allocatedPorts[portIndex]
+			portIndex++
+		}
 	}
 
 	// Allocate ports for mongod nodes
 	for i := range topo.Mongod {
 		node := &topo.Mongod[i]
 		if node.Port == 0 {
-			port, err := allocator.AllocateMongodPort(node.Host, i)
-			if err != nil {
-				return fmt.Errorf("failed to allocate port for mongod %s: %w", node.Host, err)
-			}
-			node.Port = port
+			node.Port = allocatedPorts[portIndex]
+			portIndex++
 		}
 	}
 
-	// Allocate ports for mongos nodes
+	// Allocate ports for mongos nodes LAST
 	for i := range topo.Mongos {
 		node := &topo.Mongos[i]
 		if node.Port == 0 {
-			port, err := allocator.AllocateMongosPort(node.Host, i)
-			if err != nil {
-				return fmt.Errorf("failed to allocate port for mongos %s: %w", node.Host, err)
-			}
-			node.Port = port
-		}
-	}
-
-	// Allocate ports for config server nodes
-	for i := range topo.ConfigSvr {
-		node := &topo.ConfigSvr[i]
-		if node.Port == 0 {
-			port, err := allocator.AllocateConfigSvrPort(node.Host, i)
-			if err != nil {
-				return fmt.Errorf("failed to allocate port for config server %s: %w", node.Host, err)
-			}
-			node.Port = port
+			node.Port = allocatedPorts[portIndex]
+			portIndex++
 		}
 	}
 
 	return nil
+}
+
+// isPortAvailable checks if a port is available using bind test
+func isPortAvailable(port int) bool {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// Try to bind to the port
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		// Cannot bind - port is not available
+		return false
+	}
+	listener.Close()
+
+	// Small delay to allow socket to fully close
+	time.Sleep(10 * time.Millisecond)
+
+	// Double-check with dial
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err != nil {
+		// Connection failed - port is available
+		return true
+	}
+
+	// Something is listening - not available
+	conn.Close()
+	return false
 }

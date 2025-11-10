@@ -218,11 +218,27 @@ func (e *LocalExecutor) GetDiskSpace(path string) (uint64, error) {
 	return stat.Bavail * uint64(stat.Bsize), nil
 }
 
-// CheckPortAvailable checks if a port is available
+// CheckPortAvailable checks if a port is available using a two-phase approach:
+// 1. Try to bind to the port (tests actual usability)
+// 2. Try to connect to the port (catches listening processes)
 func (e *LocalExecutor) CheckPortAvailable(port int) (bool, error) {
-	// Try to connect to the port to see if something is listening
-	// This is more reliable than trying to bind, which creates a race condition
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	// Phase 1: Try to bind to the port
+	// This is the most reliable test - if we can't bind, we can't use it
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		// Cannot bind - port is not available
+		// This catches ports in use, TIME_WAIT state, or reserved
+		return false, nil
+	}
+	// Successfully bound - close immediately
+	listener.Close()
+
+	// Phase 2: Double-check with dial to catch any listening processes
+	// Small delay to allow the socket to fully close
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 	if err != nil {
 		// Connection failed - port is available
 		return true, nil

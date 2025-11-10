@@ -29,7 +29,7 @@ func (d *Deployer) prepare(ctx context.Context) error {
 		return fmt.Errorf("binary preparation failed: %w", err)
 	}
 
-	fmt.Println("✓ Phase 2 complete: Environment prepared\n")
+	fmt.Println("✓ Phase 2 complete: Environment prepared")
 	return nil
 }
 
@@ -297,9 +297,24 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 			// If not found, try to fetch it
 			binPath, err := bm.GetBinPathForPlatform(d.version, currentPlatform)
 			if err != nil {
-				return fmt.Errorf("failed to ensure MongoDB %s for current platform: %w", d.version, err)
+				// On macOS arm64, fall back to x86_64 (Rosetta 2 compatibility)
+				if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+					fmt.Printf("  Note: MongoDB %s not available for arm64, falling back to x86_64 (Rosetta 2)\n", d.version)
+					fallbackPlatform := Platform{
+						OS:   "darwin",
+						Arch: "amd64",
+					}
+					binPath, err = bm.GetBinPathForPlatform(d.version, fallbackPlatform)
+					if err != nil {
+						return fmt.Errorf("failed to ensure MongoDB %s for current platform (tried arm64 and x86_64 fallback): %w", d.version, err)
+					}
+					d.binPath = binPath
+				} else {
+					return fmt.Errorf("failed to ensure MongoDB %s for current platform: %w", d.version, err)
+				}
+			} else {
+				d.binPath = binPath
 			}
-			d.binPath = binPath
 		}
 	} else {
 		// For remote deployment, store all platform bin paths

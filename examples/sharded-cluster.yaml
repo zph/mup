@@ -1,0 +1,67 @@
+# Example: Sharded MongoDB cluster topology
+# This file defines a production-like sharded cluster with:
+# - 1 config server replica set (3 nodes)
+# - 2 shard replica sets (3 nodes each)
+# - 2 mongos routers
+
+global:
+  user: mongodb
+  deploy_dir: /opt/mongodb
+  data_dir: /data/mongodb
+  log_dir: /var/log/mongodb
+  config_dir: /etc/mongodb
+
+# Config servers (must be a replica set)
+config_servers:
+  - host: localhost
+    port: 0  # Auto-allocated for local deployment
+    replica_set: configRS
+
+  - host: localhost
+    port: 0
+    replica_set: configRS
+
+  - host: localhost
+    port: 0
+    replica_set: configRS
+
+# Shard 1: 3-node replica set
+mongod_servers:
+  - host: localhost
+    port: 0
+    replica_set: shard1
+
+  - host: localhost
+    port: 0
+    replica_set: shard1
+
+  - host: localhost
+    port: 0
+    replica_set: shard1
+
+  # Shard 2: 3-node replica set
+  - host: localhost
+    port: 0
+    replica_set: shard2
+
+  - host: localhost
+    port: 0
+    replica_set: shard2
+
+  - host: localhost
+    port: 0
+    replica_set: shard2
+
+# Mongos routers (query routers)
+mongos_servers:
+  - host: localhost
+    port: 0  # Typically 27017, but auto-allocated here
+
+  - host: localhost
+    port: 0  # Second mongos for high availability
+
+# Usage:
+# 1. Deploy: mup cluster deploy my-sharded-cluster --topology sharded-cluster.yaml --version 7.0
+# 2. Connect: mongosh "mongodb://localhost:<mongos_port>"
+# 3. Enable sharding on database: sh.enableSharding("mydb")
+# 4. Shard collection: sh.shardCollection("mydb.mycollection", {_id: "hashed"})

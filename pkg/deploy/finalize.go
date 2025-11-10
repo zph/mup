@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 
 	"github.com/zph/mup/pkg/topology"
@@ -28,19 +29,21 @@ func (d *Deployer) finalize(ctx context.Context) error {
 	// Step 2: Display cluster info
 	d.displayClusterInfo()
 
-	fmt.Println("✓ Phase 5 complete: Deployment finalized\n")
+	fmt.Println("✓ Phase 5 complete: Deployment finalized")
 	return nil
 }
 
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
-	Name        string               `yaml:"name"`
-	Version     string               `yaml:"version"`
-	CreatedAt   time.Time            `yaml:"created_at"`
-	Status      string               `yaml:"status"`
-	Topology    *topology.Topology   `yaml:"topology"`
-	DeployMode  string               `yaml:"deploy_mode"` // "local" or "remote"
-	Nodes       []NodeMetadata       `yaml:"nodes"`
+	Name              string               `yaml:"name"`
+	Version           string               `yaml:"version"`
+	BinPath           string               `yaml:"bin_path"`     // Path to MongoDB binaries
+	CreatedAt         time.Time            `yaml:"created_at"`
+	Status            string               `yaml:"status"`
+	Topology          *topology.Topology   `yaml:"topology"`
+	DeployMode        string               `yaml:"deploy_mode"` // "local" or "remote"
+	Nodes             []NodeMetadata       `yaml:"nodes"`
+	ConnectionCommand string               `yaml:"connection_command,omitempty"` // Command to connect to cluster
 }
 
 // NodeMetadata represents metadata for a single node
@@ -66,19 +69,24 @@ func (d *Deployer) saveMetadata(ctx context.Context) error {
 	}
 
 	// Build metadata
+	connectionString := d.getConnectionString()
+	connectionCommand := d.getConnectionCommand(connectionString)
+
 	metadata := ClusterMetadata{
-		Name:       d.clusterName,
-		Version:    d.version,
-		CreatedAt:  time.Now(),
-		Status:     "running",
-		Topology:   d.topology,
+		Name:              d.clusterName,
+		Version:           d.version,
+		BinPath:           d.binPath,
+		CreatedAt:         time.Now(),
+		Status:            "running",
+		Topology:          d.topology,
 		DeployMode: func() string {
 			if d.isLocal {
 				return "local"
 			}
 			return "remote"
 		}(),
-		Nodes: d.collectNodeMetadata(),
+		Nodes:             d.collectNodeMetadata(),
+		ConnectionCommand: connectionCommand,
 	}
 
 	// Serialize to YAML
@@ -252,6 +260,36 @@ func (d *Deployer) getConnectionString() string {
 	}
 
 	return "mongodb://localhost:27017"
+}
+
+// getConnectionCommand builds the command to connect to the cluster
+func (d *Deployer) getConnectionCommand(connectionString string) string {
+	// Use mongosh from BinPath for MongoDB >= 4.0, mongo for older versions
+	// The command will be executed via shell, so we need to quote the connection string
+	v, err := version.NewVersion(d.version)
+	if err != nil {
+		// If version parsing fails, default to mongosh from BinPath
+		mongoshPath := filepath.Join(d.binPath, "mongosh")
+		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
+	}
+
+	// Check if version is >= 4.0
+	constraint, err := version.NewConstraint(">= 4.0")
+	if err != nil {
+		// If constraint parsing fails, default to mongosh from BinPath
+		mongoshPath := filepath.Join(d.binPath, "mongosh")
+		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
+	}
+
+	if constraint.Check(v) {
+		// MongoDB >= 4.0: use mongosh from BinPath
+		mongoshPath := filepath.Join(d.binPath, "mongosh")
+		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
+	}
+
+	// MongoDB < 4.0: use mongo from BinPath
+	mongoPath := filepath.Join(d.binPath, "mongo")
+	return fmt.Sprintf("%s \"%s\"", mongoPath, connectionString)
 }
 
 // repeatString creates a string by repeating a character n times

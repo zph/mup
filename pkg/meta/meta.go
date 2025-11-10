@@ -13,13 +13,15 @@ import (
 
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
-	Name       string               `yaml:"name"`
-	Version    string               `yaml:"version"`
-	CreatedAt  time.Time            `yaml:"created_at"`
-	Status     string               `yaml:"status"`
-	Topology   *topology.Topology   `yaml:"topology"`
-	DeployMode string               `yaml:"deploy_mode"` // "local" or "remote"
-	Nodes      []NodeMetadata       `yaml:"nodes"`
+	Name              string               `yaml:"name"`
+	Version           string               `yaml:"version"`
+	BinPath           string               `yaml:"bin_path"`     // Path to MongoDB binaries
+	CreatedAt         time.Time            `yaml:"created_at"`
+	Status            string               `yaml:"status"`
+	Topology          *topology.Topology    `yaml:"topology"`
+	DeployMode        string               `yaml:"deploy_mode"` // "local" or "remote"
+	Nodes             []NodeMetadata       `yaml:"nodes"`
+	ConnectionCommand string               `yaml:"connection_command,omitempty"` // Command to connect to cluster
 }
 
 // NodeMetadata represents metadata for a single node

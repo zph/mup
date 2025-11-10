@@ -51,7 +51,7 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 		}
 
 		exec := executors[node.Host]
-		if err := m.startNode(exec, node); err != nil {
+		if err := m.startNode(exec, node, metadata.BinPath); err != nil {
 			return fmt.Errorf("failed to start %s %s:%d: %w", node.Type, node.Host, node.Port, err)
 		}
 
@@ -128,16 +128,25 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 }
 
 // startNode starts a single MongoDB node and updates PID in metadata
-func (m *Manager) startNode(exec executor.Executor, node *meta.NodeMetadata) error {
+func (m *Manager) startNode(exec executor.Executor, node *meta.NodeMetadata, binPath string) error {
 	var command string
+	var binaryName string
 
 	switch node.Type {
 	case "mongod", "config":
-		command = fmt.Sprintf("mongod --config %s", node.ConfigFile)
+		binaryName = "mongod"
 	case "mongos":
-		command = fmt.Sprintf("mongos --config %s", node.ConfigFile)
+		binaryName = "mongos"
 	default:
 		return fmt.Errorf("unknown node type: %s", node.Type)
+	}
+
+	// Use full path to versioned binary if binPath is provided
+	if binPath != "" {
+		command = fmt.Sprintf("%s/%s --config %s", binPath, binaryName, node.ConfigFile)
+	} else {
+		// Fallback to binary in PATH (for backward compatibility)
+		command = fmt.Sprintf("%s --config %s", binaryName, node.ConfigFile)
 	}
 
 	pid, err := exec.Background(command)

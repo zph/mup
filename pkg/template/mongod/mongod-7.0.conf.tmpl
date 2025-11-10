@@ -23,8 +23,10 @@ net:
 
 storage:
   dbPath: {{ .Storage.DBPath }}
+{{- if supportsJournalEnabled }}
   journal:
     enabled: {{ .Storage.Journal.Enabled }}
+{{- end }}
 {{- if .Storage.Engine }}
   engine: {{ .Storage.Engine }}
 {{- end }}

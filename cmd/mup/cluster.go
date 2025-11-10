@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zph/mup/pkg/cluster"
 	"github.com/zph/mup/pkg/deploy"
+	"github.com/zph/mup/pkg/meta"
 )
 
 var (
@@ -185,6 +188,83 @@ var clusterDestroyCmd = &cobra.Command{
 	},
 }
 
+var clusterListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all managed clusters",
+	Long: `List all MongoDB clusters managed by mup.
+
+Shows cluster name, status, version, topology type, and creation time.
+
+Examples:
+  # List all clusters
+  mup cluster list
+
+  # List with JSON output
+  mup cluster list --format json
+`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := cluster.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to create manager: %w", err)
+		}
+
+		return mgr.List(clusterDisplayFormat)
+	},
+}
+
+var clusterConnectCmd = &cobra.Command{
+	Use:   "connect <cluster-name>",
+	Short: "Connect to a MongoDB cluster using mongosh",
+	Long: `Connect to a running MongoDB cluster using the connection command stored in metadata.
+
+The connection command is automatically generated during deployment and stored in the cluster metadata.
+It uses mongosh (or falls back to mongo for older MongoDB versions).
+
+Examples:
+  # Connect to a cluster
+  mup cluster connect my-cluster
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		clusterName := args[0]
+
+		metaMgr, err := meta.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to create meta manager: %w", err)
+		}
+
+		// Load cluster metadata
+		metadata, err := metaMgr.Load(clusterName)
+		if err != nil {
+			return fmt.Errorf("failed to load cluster metadata: %w", err)
+		}
+
+		if metadata.Status != "running" {
+			return fmt.Errorf("cluster '%s' is not running (status: %s). Run 'mup cluster start %s'", clusterName, metadata.Status, clusterName)
+		}
+
+		if metadata.ConnectionCommand == "" {
+			return fmt.Errorf("no connection command found in metadata for cluster '%s'", clusterName)
+		}
+
+		fmt.Printf("Connecting to cluster '%s'...\n", clusterName)
+		fmt.Printf("Executing: %s\n\n", metadata.ConnectionCommand)
+
+		// Execute the connection command via shell
+		// Use sh -c to properly handle quoted connection strings
+		shellCmd := exec.Command("sh", "-c", metadata.ConnectionCommand)
+		shellCmd.Stdin = os.Stdin
+		shellCmd.Stdout = os.Stdout
+		shellCmd.Stderr = os.Stderr
+
+		if err := shellCmd.Run(); err != nil {
+			return fmt.Errorf("failed to connect: %w", err)
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	// Add cluster command to root
 	rootCmd.AddCommand(clusterCmd)
@@ -195,6 +275,8 @@ func init() {
 	clusterCmd.AddCommand(clusterStopCmd)
 	clusterCmd.AddCommand(clusterDisplayCmd)
 	clusterCmd.AddCommand(clusterDestroyCmd)
+	clusterCmd.AddCommand(clusterListCmd)
+	clusterCmd.AddCommand(clusterConnectCmd)
 
 	// Deploy command flags
 	clusterDeployCmd.Flags().StringVarP(&clusterDeployVersion, "version", "v", "7.0", "MongoDB version to deploy")
@@ -210,6 +292,9 @@ func init() {
 
 	// Display command flags
 	clusterDisplayCmd.Flags().StringVar(&clusterDisplayFormat, "format", "text", "Output format: text, json, yaml")
+
+	// List command flags
+	clusterListCmd.Flags().StringVar(&clusterDisplayFormat, "format", "text", "Output format: text, json, yaml")
 
 	// Destroy command flags
 	clusterDestroyCmd.Flags().BoolVar(&clusterKeepData, "keep-data", false, "Keep data directories")

@@ -71,18 +71,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		// Allocate ports for local deployment with availability checking
 		fmt.Println("Allocating ports for local deployment...")
 
-		// Create port checker using the executor
-		portChecker := func(port int) (bool, error) {
-			if len(executors) > 0 {
-				// Use the first executor (all are local)
-				for _, exec := range executors {
-					return exec.CheckPortAvailable(port)
-				}
-			}
-			return true, nil
-		}
-
-		if err := topology.AllocatePortsForTopology(topo, portChecker); err != nil {
+		if err := topology.AllocatePortsForTopology(topo, nil); err != nil {
 			return nil, fmt.Errorf("failed to allocate ports: %w", err)
 		}
 	} else {
@@ -119,7 +108,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		return nil, fmt.Errorf("failed to initialize template manager: %w", err)
 	}
 
-	fmt.Println("✓ Phase 1 complete: Topology validated\n")
+	fmt.Println("✓ Phase 1 complete: Topology validated")
 
 	return &Deployer{
 		clusterName: cfg.ClusterName,
