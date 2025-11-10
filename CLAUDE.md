@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mup (MongoDB Utility Platform) is a cluster management tool for MongoDB, inspired by TiDB's TiUP. It's currently in Phase 1 (Playground), providing local MongoDB cluster management for development and testing. Future phases will add production cluster deployment capabilities with SSH-based remote management.
+Mup (MongoDB Utility Platform) is a cluster management tool for MongoDB, inspired by TiDB's TiUP. The project is currently in Phase 2-3, providing both playground and production cluster management capabilities. Phase 1 (Playground) is complete, and Phase 2-3 (Core Foundation and Basic Deployment) are largely implemented for local deployments. Remote SSH-based deployment is planned for future phases.
 
 **Key Dependencies:**
 - `github.com/zph/mongo-scaffold` - Core library for MongoDB cluster orchestration
@@ -39,6 +39,15 @@ make run               # Build and run playground start
 ./bin/mup playground start --version 7.0  # Start local cluster
 ./bin/mup playground status               # Check cluster status
 ./bin/mup playground connect             # Connect to cluster
+
+# Production cluster management
+./bin/mup cluster deploy my-cluster examples/replica-set.yaml --version 7.0
+./bin/mup cluster list                   # List all clusters
+./bin/mup cluster display my-cluster     # Show cluster details
+./bin/mup cluster connect my-cluster     # Connect to cluster
+./bin/mup cluster start my-cluster       # Start cluster
+./bin/mup cluster stop my-cluster         # Stop cluster
+./bin/mup cluster destroy my-cluster     # Destroy cluster
 ```
 
 ## Architecture
@@ -48,10 +57,34 @@ make run               # Build and run playground start
 cmd/mup/           - CLI entry point and command definitions
   main.go          - Root command setup
   playground.go    - Playground subcommands (start/stop/status/connect/destroy)
+  cluster.go       - Cluster subcommands (deploy/start/stop/display/destroy/list/connect)
 pkg/playground/    - Playground cluster management logic
   playground.go    - Manager, state persistence, cluster lifecycle
+pkg/cluster/       - Production cluster management logic
+  manager.go       - Cluster lifecycle operations (start/stop/destroy)
+  display.go       - Cluster status display
+  list.go          - Cluster listing
+  destroy.go       - Cluster destruction
+pkg/deploy/        - Deployment orchestration
+  deployer.go      - Main deployer interface
+  deploy.go        - Phase 3: Deploy (start processes)
+  prepare.go       - Phase 2: Prepare (download binaries, create dirs)
+  initialize.go   - Phase 4: Initialize (replica sets, sharding)
+  finalize.go      - Phase 5: Finalize (save metadata, display info)
+  binary_manager.go - Binary download and management
+pkg/meta/          - Cluster metadata management
+  meta.go          - Metadata storage and retrieval
+pkg/topology/      - Topology parsing and validation
+  topology.go      - Topology structure and parsing
+  port_allocator.go - Port allocation for local deployments
+pkg/template/      - Configuration template management
+  manager.go       - Template loading and rendering
+pkg/executor/      - Unified execution interface
+  executor.go      - Executor interface definition
+  local.go         - Local executor implementation
 bin/               - Compiled binaries (gitignored)
 docs/              - Design documentation
+examples/          - Example topology files
 ```
 
 ### State Management
@@ -60,7 +93,13 @@ docs/              - Design documentation
 - `state.json` - Mup's internal state (status, version, timestamps)
 - `cluster-info.json` - mongo-scaffold cluster details (connection info, ports, topology)
 
+**Production cluster state**: `~/.mup/storage/clusters/<name>/`
+- `meta.yaml` - Cluster metadata (name, version, topology, nodes, connection command)
+- Binary cache: `~/.mup/storage/packages/` - Cached MongoDB binaries
+
 The playground uses mongo-scaffold's defaults: 2 shards with 3 replica nodes each, 1 config server, 1 mongos router.
+
+Production clusters use custom deployment logic with template-based configuration generation.
 
 ### Key Implementation Patterns
 
@@ -124,14 +163,50 @@ All compiled binaries go to `./bin/` (gitignored). Never output to project root 
 - **README.md** - User-facing documentation and quick start guide
 - New markdown files MUST go in docs/
 
+## Current Implementation Status
+
+### Phase 1: Playground ✅ (Complete)
+- Local MongoDB cluster management using mongo-scaffold
+- Playground start/stop/status/connect/destroy commands
+- State persistence (JSON)
+
+### Phase 2: Core Foundation ✅ (Mostly Complete)
+- ✅ Meta Manager (`pkg/meta/`) - YAML-based state storage
+- ✅ Topology Parser (`pkg/topology/`) - YAML parsing and validation
+- ✅ Binary Manager (`pkg/deploy/binary_manager.go`) - Download and cache MongoDB binaries
+- ✅ Template Manager (`pkg/template/`) - Version-aware configuration templates
+- ✅ Executor Interface (`pkg/executor/`) - Unified local/remote execution (local ✅, SSH ⏳)
+- ⏳ SSH Executor - Remote deployment support (planned)
+
+### Phase 3: Basic Deployment ✅ (Mostly Complete)
+- ✅ `mup cluster deploy` - Full deployment workflow (5 phases)
+- ✅ `mup cluster start` - Start stopped clusters
+- ✅ `mup cluster stop` - Stop running clusters
+- ✅ `mup cluster display` - Show cluster status and information
+- ✅ `mup cluster destroy` - Remove clusters
+- ✅ `mup cluster list` - List all managed clusters
+- ✅ `mup cluster connect` - Connect to clusters using mongosh/mongo
+- ⏳ `mup cluster restart` - Restart clusters (planned)
+
+### Key Features Implemented
+- Version-specific template handling (e.g., `storage.journal.enabled` removed in 6.1+)
+- Process death detection with automatic log reading
+- Automatic mongosh/mongo download to BinPath
+- Connection command generation (mongosh for >= 4.0, mongo for < 4.0)
+- Replica set initialization using MongoDB Go driver
+- Sharded cluster configuration using MongoDB Go driver
+- Template-based configuration generation
+- Local port allocation for local deployments
+
 ## Future Architecture
 
-Phase 2+ will add production cluster management (see docs/TODO.md for complete roadmap):
+Phase 4+ will add advanced features (see docs/TODO.md for complete roadmap):
 - SSH-based agentless deployment to remote hosts
-- YAML topology files for cluster configuration
-- State in `~/.mup/storage/clusters/<name>/meta.yaml`
-- Template-based MongoDB configuration generation
 - Rolling operations for zero-downtime updates
+- Configuration management and reload
+- Scale out/in operations
+- Version upgrades
+- Security features (TLS, authentication)
 
 When implementing new features:
 1. Check docs/TODO.md for detailed implementation tasks

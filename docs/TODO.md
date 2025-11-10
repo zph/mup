@@ -11,128 +11,176 @@ This document tracks the implementation roadmap for Mup commands and features, b
 - [x] Automatic mongo/mongosh connection
 - [x] Integration with mongo-scaffold library
 
+### ✅ Phase 2: Core Foundation (Mostly Complete)
+- [x] Meta Manager - YAML-based state storage with Load/Save/List/Delete operations
+- [x] Topology Parser - YAML parsing, validation, and port allocation
+- [x] Binary Manager - Download, cache, and manage MongoDB binaries (including mongosh/mongo)
+- [x] Template Manager - Version-aware configuration templates
+- [x] Executor Interface - Unified local/remote execution (local ✅, SSH ⏳)
+- [ ] SSH Executor - Remote deployment support (planned)
+
+### ✅ Phase 3: Basic Deployment (Mostly Complete)
+- [x] `mup cluster deploy` - Full 5-phase deployment workflow
+- [x] `mup cluster start` - Start stopped clusters
+- [x] `mup cluster stop` - Stop running clusters
+- [x] `mup cluster display` - Show cluster status and information
+- [x] `mup cluster destroy` - Remove clusters
+- [x] `mup cluster list` - List all managed clusters
+- [x] `mup cluster connect` - Connect to clusters using mongosh/mongo
+- [ ] `mup cluster restart` - Restart clusters (planned)
+
+**Note:** All Phase 3 commands work for local deployments. Remote SSH-based deployment is planned for future phases.
+
 ---
 
 ## Phase 2: Core Foundation
 
 ### Infrastructure Components
 
-#### SSH Executor (`pkg/ssh/`)
-- [ ] SSH connection manager with connection pooling
-- [ ] Key-based authentication (default: `~/.ssh/id_rsa`)
-- [ ] SSH agent support
-- [ ] Custom identity file per deployment
-- [ ] Execute remote commands with output capture
-- [ ] File upload/download (SCP/SFTP)
-- [ ] Directory creation with permissions
-- [ ] Connectivity checking
-- [ ] Timeout and retry logic
-- [ ] Parallel execution across hosts
+#### Executor Interface (`pkg/executor/`) ✅
+- [x] Unified executor interface for local/remote execution
+- [x] Local executor implementation (`pkg/executor/local.go`)
+  - [x] File operations (create, upload, download, remove)
+  - [x] Command execution (execute, background)
+  - [x] Process management (is running, kill, stop)
+  - [x] System information (OS info, disk space, port checking)
+- [ ] SSH executor implementation (`pkg/ssh/`)
+  - [ ] SSH connection manager with connection pooling
+  - [ ] Key-based authentication (default: `~/.ssh/id_rsa`)
+  - [ ] SSH agent support
+  - [ ] Custom identity file per deployment
+  - [ ] Execute remote commands with output capture
+  - [ ] File upload/download (SCP/SFTP)
+  - [ ] Directory creation with permissions
+  - [ ] Connectivity checking
+  - [ ] Timeout and retry logic
+  - [ ] Parallel execution across hosts
 
-#### Meta Manager (`pkg/meta/`)
-- [ ] YAML-based state storage at `~/.mup/storage/clusters/<name>/meta.yaml`
-- [ ] Load/Save/Update operations
+#### Meta Manager (`pkg/meta/`) ✅
+- [x] YAML-based state storage at `~/.mup/storage/clusters/<name>/meta.yaml`
+- [x] Load/Save/Update operations
+- [x] List all clusters
+- [x] Delete cluster metadata
+- [x] Connection command storage
 - [ ] Atomic updates with file locking
 - [ ] State backup on updates
 - [ ] State reconciliation (actual vs stored state)
-- [ ] List all clusters
-- [ ] Delete cluster metadata
 - [ ] Cluster state validation
 
-#### Topology Parser (`pkg/topology/`)
-- [ ] Parse topology YAML files
-- [ ] Validate topology structure
-- [ ] Support global configuration inheritance
-- [ ] Validate node specifications (host, port, paths)
-- [ ] Detect topology type (standalone, replica set, sharded)
-- [ ] Port conflict detection
+#### Topology Parser (`pkg/topology/`) ✅
+- [x] Parse topology YAML files
+- [x] Validate topology structure
+- [x] Support global configuration inheritance
+- [x] Validate node specifications (host, port, paths)
+- [x] Detect topology type (standalone, replica set, sharded)
+- [x] Port conflict detection (for local deployments)
+- [x] Port allocation for local deployments
 - [ ] Resource requirement calculation
 
-#### Binary Repository (`pkg/repository/`)
-- [ ] Download MongoDB tarballs from official sources
-- [ ] Local cache at `~/.mup/storage/packages/`
-- [ ] Version-specific binary extraction
+#### Binary Manager (`pkg/deploy/binary_manager.go`) ✅
+- [x] Download MongoDB tarballs from official sources
+- [x] Local cache at `~/.mup/storage/packages/`
+- [x] Version-specific binary extraction
+- [x] Support for x86_64 and ARM64
+- [x] MongoDB version 3.6 through 8.0 support
+- [x] Automatic mongosh download (version 2.5.9)
+- [x] Automatic mongo (legacy shell) support for < 4.0
+- [x] Multi-platform support (darwin, linux)
 - [ ] Checksum verification
-- [ ] Support for x86_64 and ARM64
-- [ ] MongoDB version 3.6 through 8.0 support
 
 ---
 
 ## Phase 3: Basic Deployment
 
-### `mup cluster deploy`
+### `mup cluster deploy` ✅
 Deploy a new MongoDB cluster from topology file.
 
 **Command:**
 ```bash
-mup cluster deploy <cluster-name> <version> <topology-file> [flags]
+mup cluster deploy <cluster-name> <topology-file> [flags]
+  --version string           MongoDB version (default: 7.0)
   --user string              SSH user (default from topology)
   --identity-file string     SSH private key path
   --yes                      Skip confirmation prompts
+  --timeout duration         Deployment timeout (default: 30m)
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure and flags
-- [ ] Pre-flight checks
-  - [ ] SSH connectivity to all hosts
+- [x] Command structure and flags
+- [x] Pre-flight checks (for local deployments)
+  - [x] Port availability checks
+  - [ ] SSH connectivity to all hosts (remote deployments)
   - [ ] Disk space verification
-  - [ ] Port availability checks
   - [ ] User/group existence or creation
   - [ ] OS compatibility validation
-- [ ] Binary distribution
-  - [ ] Download/cache MongoDB binaries
-  - [ ] Extract and prepare binaries
-  - [ ] Upload to each node at `/opt/mup/mongodb/<version>/`
-  - [ ] Set permissions and ownership
-- [ ] Directory structure creation
-  - [ ] Create data directories (`/data/mongodb/`)
-  - [ ] Create log directories (`/var/log/mongodb/`)
-  - [ ] Create config directories (`/etc/mongodb/`)
-- [ ] Configuration generation
-  - [ ] Render mongod.conf from templates
-  - [ ] Generate systemd service files
-  - [ ] Upload configurations
-- [ ] Service initialization
-  - [ ] Start mongod processes
-  - [ ] Wait for processes to be ready
-  - [ ] Initialize replica set (if applicable)
+- [x] Binary distribution
+  - [x] Download/cache MongoDB binaries
+  - [x] Extract and prepare binaries
+  - [x] Automatic mongosh/mongo download
+  - [ ] Upload to each node at `/opt/mup/mongodb/<version>/` (remote)
+  - [ ] Set permissions and ownership (remote)
+- [x] Directory structure creation
+  - [x] Create data directories (local: `~/.mup/storage/clusters/<name>/data/`)
+  - [x] Create log directories (local: `~/.mup/storage/clusters/<name>/logs/`)
+  - [x] Create config directories (local: `~/.mup/storage/clusters/<name>/config/`)
+- [x] Configuration generation
+  - [x] Render mongod.conf from templates
+  - [x] Render mongos.conf from templates
+  - [x] Render config server configs from templates
+  - [x] Version-aware template selection
+  - [ ] Generate systemd service files (remote)
+  - [x] Upload configurations (local)
+- [x] Service initialization
+  - [x] Start mongod processes
+  - [x] Start mongos processes (for sharded clusters)
+  - [x] Start config servers (for sharded clusters)
+  - [x] Wait for processes to be ready
+  - [x] Process death detection with log reading
+  - [x] Initialize replica set (using MongoDB Go driver)
+  - [x] Configure sharding (using MongoDB Go driver)
   - [ ] Configure authentication (if specified)
-- [ ] Metadata storage
-  - [ ] Save complete cluster state to meta.yaml
+- [x] Metadata storage
+  - [x] Save complete cluster state to meta.yaml
+  - [x] Connection command generation
 
-### `mup cluster start`
+### `mup cluster start` ✅
 Start a stopped cluster.
 
 **Command:**
 ```bash
 mup cluster start <cluster-name> [flags]
-  --node string    Start specific node only
+  --node string    Start specific node only (host:port)
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure
-- [ ] Load cluster metadata
-- [ ] Start systemd services on each node (or specified node)
+- [x] Command structure
+- [x] Load cluster metadata
+- [x] Start MongoDB processes on each node (or specified node)
+- [x] Update PID in metadata
+- [x] Update metadata with running status
 - [ ] Wait for MongoDB processes to be ready
 - [ ] Verify replica set status
-- [ ] Update metadata with running status
+- [ ] Start systemd services on each node (remote)
 
-### `mup cluster stop`
+### `mup cluster stop` ✅
 Stop a running cluster.
 
 **Command:**
 ```bash
 mup cluster stop <cluster-name> [flags]
-  --node string    Stop specific node only
+  --node string    Stop specific node only (host:port)
+  --yes            Skip confirmation prompt
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure
-- [ ] Load cluster metadata
-- [ ] Graceful shutdown of MongoDB processes
-- [ ] Stop systemd services
+- [x] Command structure
+- [x] Load cluster metadata
+- [x] Graceful shutdown of MongoDB processes (SIGINT)
+- [x] Clear PID from metadata
+- [x] Update metadata with stopped status
+- [x] Confirmation prompt (unless --yes)
+- [ ] Stop systemd services (remote)
 - [ ] Verify processes stopped
-- [ ] Update metadata with stopped status
 
 ### `mup cluster restart`
 Restart cluster nodes.
@@ -154,7 +202,7 @@ mup cluster restart <cluster-name> [flags]
 - [ ] Non-rolling restart (all nodes)
 - [ ] Health verification after restart
 
-### `mup cluster display`
+### `mup cluster display` ✅
 Show cluster status and information.
 
 **Command:**
@@ -164,20 +212,22 @@ mup cluster display <cluster-name> [flags]
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure
+- [x] Command structure
+- [x] Load cluster metadata
+- [x] Display formatted output (text format)
+  - [x] Cluster overview
+  - [x] Node details (version, status, type)
+  - [x] Topology visualization
+  - [x] Connection information
+- [x] Port-based status checking
 - [ ] Query actual cluster state
   - [ ] Connect to each node
   - [ ] Get MongoDB server status
   - [ ] Get replica set status
   - [ ] Get replication lag
-- [ ] Display formatted output
-  - [ ] Cluster overview
-  - [ ] Node details (version, status, role)
-  - [ ] Topology visualization
-  - [ ] Health status
-- [ ] JSON/YAML output options
+- [ ] JSON/YAML output options (structure exists, needs implementation)
 
-### `mup cluster destroy`
+### `mup cluster destroy` ✅
 Completely remove a cluster.
 
 **Command:**
@@ -188,42 +238,64 @@ mup cluster destroy <cluster-name> [flags]
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure
-- [ ] Confirmation prompt (unless --yes)
-- [ ] Stop all MongoDB processes
-- [ ] Remove systemd services
+- [x] Command structure
+- [x] Confirmation prompt (unless --yes)
+- [x] Stop all MongoDB processes
+- [x] Remove data directories (unless --keep-data, local only)
+- [x] Remove log directories (local only)
+- [x] Remove configuration directories (local only)
+- [x] Delete metadata
+- [ ] Remove systemd services (remote)
 - [ ] Remove MongoDB binaries (optional)
-- [ ] Remove data directories (unless --keep-data)
-- [ ] Remove log files
-- [ ] Remove configuration files
-- [ ] Delete metadata
 
-### `mup list`
+### `mup cluster list` ✅
 List all managed clusters.
 
 **Command:**
 ```bash
-mup list [flags]
+mup cluster list [flags]
   --format string   Output format: text, json, yaml (default: text)
 ```
 
 **Implementation Tasks:**
-- [ ] Command structure
-- [ ] Scan `~/.mup/storage/clusters/` for metadata
-- [ ] Display cluster summary (name, version, status, node count)
-- [ ] Support multiple output formats
+- [x] Command structure
+- [x] Scan `~/.mup/storage/clusters/` for metadata
+- [x] Display cluster summary (name, version, status, topology, node count)
+- [x] Support multiple output formats (text, json, yaml)
+
+---
+
+### `mup cluster connect` ✅
+Connect to a MongoDB cluster using mongosh/mongo.
+
+**Command:**
+```bash
+mup cluster connect <cluster-name>
+```
+
+**Implementation Tasks:**
+- [x] Command structure
+- [x] Load cluster metadata
+- [x] Read connection command from metadata
+- [x] Execute connection command via shell
+- [x] Version-aware shell selection (mongosh for >= 4.0, mongo for < 4.0)
 
 ---
 
 ## Phase 4: Configuration Management
 
-### Template System (`pkg/template/`)
-- [ ] MongoDB configuration templates
-  - [ ] mongod.conf template for 3.6-4.0
-  - [ ] mongod.conf template for 4.2+
-  - [ ] mongos.conf template
-  - [ ] Version-aware template selection
-- [ ] Go template rendering
+### Template System (`pkg/template/`) ✅
+- [x] MongoDB configuration templates
+  - [x] mongod.conf template for 3.6-4.0
+  - [x] mongod.conf template for 4.2+
+  - [x] mongod.conf template for 5.0+
+  - [x] mongod.conf template for 7.0+
+  - [x] mongos.conf template for 4.2+
+  - [x] mongos.conf template for 5.0+
+  - [x] config server templates
+  - [x] Version-aware template selection
+- [x] Go template rendering
+- [x] Version-specific template functions (e.g., `supportsJournalEnabled`)
 - [ ] Configuration validation against MongoDB schema
 - [ ] Support for all MongoDB configuration options
 
@@ -475,8 +547,13 @@ mup cluster exec <cluster-name> -- <command> [flags]
 
 ## Notes
 
-- Current implementation (Phase 1) uses JSON for state; future phases use YAML for consistency with topology files
-- Playground uses mongo-scaffold library; production cluster management will be custom implementation
-- All SSH operations should support connection pooling for performance
-- Configuration changes should always be validated before application
-- Rolling operations are critical for zero-downtime updates in production
+- **State Management:** Playground uses JSON for state; production clusters use YAML for consistency with topology files
+- **Deployment Modes:**
+  - Local deployments are fully functional (all Phase 3 commands work)
+  - Remote SSH-based deployments are planned for future phases
+- **Binary Management:** MongoDB binaries and shells (mongosh/mongo) are automatically downloaded and cached
+- **Template System:** Version-aware templates handle MongoDB version differences (e.g., `storage.journal.enabled` removed in 6.1+)
+- **Process Management:** Process death detection automatically reads and displays log files when processes die during startup
+- **Connection Commands:** Automatically generated based on MongoDB version (mongosh for >= 4.0, mongo for < 4.0)
+- **Replica Sets & Sharding:** Initialization uses MongoDB Go driver for robust, programmatic configuration
+- **Future Work:** SSH executor, remote deployments, rolling operations, and advanced features are planned
