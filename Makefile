@@ -1,4 +1,4 @@
-.PHONY: all build clean test install help
+.PHONY: all build clean test install help docker-ssh-image test-ssh test-ssh-short
 
 # Binary output directory
 BIN_DIR := ./bin
@@ -79,6 +79,27 @@ lint:
 ## run: Build and run playground start command
 run: build
 	$(BIN_DIR)/$(BINARY_NAME) playground start
+
+## docker-ssh-image: Build Docker image for SSH testing
+docker-ssh-image:
+	@echo "Building SSH test node Docker image..."
+	@bash test/docker/ssh-node/build.sh
+
+## test-ssh-short: Run quick SSH tests (skip integration tests)
+test-ssh-short:
+	@echo "Running quick SSH tests..."
+	$(GOTEST) -short -v ./pkg/executor/
+
+## test-ssh: Run full SSH integration tests (requires Docker)
+test-ssh: docker-ssh-image
+	@echo "Running SSH integration tests..."
+	@echo "Note: This will launch Docker containers for testing"
+	$(GOTEST) -v -run TestSSH ./pkg/executor/
+
+## test-all: Run all tests including SSH integration tests
+test-all: docker-ssh-image
+	@echo "Running all tests including SSH integration tests..."
+	$(GOTEST) -v ./...
 
 ## help: Show this help message
 help:
