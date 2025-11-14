@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zph/mup/pkg/cluster/health"
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
 )
@@ -30,86 +31,236 @@ func (m *Manager) Display(ctx context.Context, clusterName string, format string
 	}
 }
 
-// displayText displays cluster info in text format
+// displayText displays cluster info in text format with comprehensive health checks
 func (m *Manager) displayText(metadata *meta.ClusterMetadata) error {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Cluster: %s\n", metadata.Name)
-	fmt.Println(strings.Repeat("=", 60))
+	// Perform health checks
+	exec := executor.NewLocalExecutor()
+	defer exec.Close()
 
-	fmt.Printf("Status:         %s\n", metadata.Status)
-	fmt.Printf("MongoDB:        %s\n", metadata.Version)
-	fmt.Printf("Deploy mode:    %s\n", metadata.DeployMode)
-	fmt.Printf("Created:        %s\n", metadata.CreatedAt.Format(time.RFC3339))
+	checker, err := health.NewChecker(metadata, exec)
+	if err != nil {
+		return fmt.Errorf("failed to create health checker: %w", err)
+	}
+
+	ctx := context.Background()
+	clusterHealth, err := checker.Check(ctx)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+
+	// Display header
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Printf("Cluster: %s\n", metadata.Name)
+	fmt.Println(strings.Repeat("=", 70))
+
+	fmt.Printf("MongoDB Version: %s\n", metadata.Version)
+	fmt.Printf("Deploy Mode:     %s\n", metadata.DeployMode)
+	fmt.Printf("Created:         %s\n", metadata.CreatedAt.Format("2006-01-02 15:04:05"))
 
 	// Get topology type
 	topoType := "unknown"
 	if metadata.Topology != nil {
 		topoType = metadata.Topology.GetTopologyType()
 	}
-	fmt.Printf("Topology:       %s\n", topoType)
+	fmt.Printf("Topology Type:   %s\n", topoType)
 
-	// Group nodes by type
-	mongodNodes := []meta.NodeMetadata{}
-	mongosNodes := []meta.NodeMetadata{}
-	configNodes := []meta.NodeMetadata{}
+	// Display nodes with health status
+	fmt.Println("\n" + strings.Repeat("━", 70))
+	fmt.Println("NODES")
+	fmt.Println(strings.Repeat("━", 70))
 
-	for _, node := range metadata.Nodes {
-		switch node.Type {
+	// Group nodes by type with health info
+	mongodNodes := []health.NodeHealth{}
+	mongosNodes := []health.NodeHealth{}
+	configNodes := []health.NodeHealth{}
+
+	for _, nodeHealth := range clusterHealth.Nodes {
+		switch nodeHealth.Type {
 		case "mongod":
-			mongodNodes = append(mongodNodes, node)
+			mongodNodes = append(mongodNodes, nodeHealth)
 		case "mongos":
-			mongosNodes = append(mongosNodes, node)
+			mongosNodes = append(mongosNodes, nodeHealth)
 		case "config":
-			configNodes = append(configNodes, node)
+			configNodes = append(configNodes, nodeHealth)
 		}
 	}
 
-	fmt.Println("\nNodes:")
-	fmt.Println(strings.Repeat("-", 60))
-
 	if len(configNodes) > 0 {
-		fmt.Println("Config Servers:")
+		fmt.Println("\nConfig Servers:")
 		for _, node := range configNodes {
-			status := m.getNodeStatus(node)
-			fmt.Printf("  - %s:%d (%s) [%s]\n", node.Host, node.Port, node.ReplicaSet, status)
+			m.displayNodeHealth(node)
 		}
 	}
 
 	if len(mongodNodes) > 0 {
-		fmt.Println("Mongod Servers:")
+		fmt.Println("\nMongod Servers:")
 		for _, node := range mongodNodes {
-			status := m.getNodeStatus(node)
-			rsInfo := ""
-			if node.ReplicaSet != "" {
-				rsInfo = fmt.Sprintf(" (%s)", node.ReplicaSet)
-			}
-			fmt.Printf("  - %s:%d%s [%s]\n", node.Host, node.Port, rsInfo, status)
+			m.displayNodeHealth(node)
 		}
 	}
 
 	if len(mongosNodes) > 0 {
-		fmt.Println("Mongos Routers:")
+		fmt.Println("\nMongos Routers:")
 		for _, node := range mongosNodes {
-			status := m.getNodeStatus(node)
-			fmt.Printf("  - %s:%d [%s]\n", node.Host, node.Port, status)
+			m.displayNodeHealth(node)
 		}
 	}
 
-	fmt.Println("\nConnection:")
-	fmt.Println(strings.Repeat("-", 60))
+	// Display monitoring if enabled
+	if clusterHealth.Monitoring.Enabled {
+		m.displayMonitoringHealth(clusterHealth.Monitoring, metadata)
+	}
+
+	// Display port mapping
+	m.displayPortMapping(clusterHealth.Ports)
+
+	// Display connection info
+	fmt.Println("\n" + strings.Repeat("━", 70))
+	fmt.Println("CONNECTION")
+	fmt.Println(strings.Repeat("━", 70))
 	connStr := m.getConnectionString(metadata)
-	fmt.Printf("URI: %s\n", connStr)
+	fmt.Printf("%s\n", connStr)
 	fmt.Printf("\nTo connect:\n  mongosh \"%s\"\n", connStr)
+	if metadata.ConnectionCommand != "" {
+		fmt.Printf("\nOr use:\n  %s\n", metadata.ConnectionCommand)
+	}
 
-	fmt.Println("\nManagement:")
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Printf("Start:   mup cluster start %s\n", metadata.Name)
-	fmt.Printf("Stop:    mup cluster stop %s\n", metadata.Name)
-	fmt.Printf("Destroy: mup cluster destroy %s\n", metadata.Name)
+	// Display management commands
+	fmt.Println("\n" + strings.Repeat("━", 70))
+	fmt.Println("MANAGEMENT")
+	fmt.Println(strings.Repeat("━", 70))
+	fmt.Printf("Start cluster:   mup cluster start %s\n", metadata.Name)
+	fmt.Printf("Stop cluster:    mup cluster stop %s\n", metadata.Name)
+	fmt.Printf("Cluster status:  mup cluster display %s\n", metadata.Name)
+	fmt.Printf("Destroy cluster: mup cluster destroy %s\n", metadata.Name)
 
-	fmt.Println(strings.Repeat("=", 60))
+	if clusterHealth.Monitoring.Enabled {
+		fmt.Printf("\nMonitoring:\n")
+		fmt.Printf("View dashboards: mup monitoring dashboard %s\n", metadata.Name)
+		fmt.Printf("View status:     mup monitoring status %s\n", metadata.Name)
+	}
+
+	fmt.Println(strings.Repeat("=", 70))
 
 	return nil
+}
+
+// displayNodeHealth displays detailed health info for a node
+func (m *Manager) displayNodeHealth(node health.NodeHealth) {
+	// Status indicator
+	statusIcon := m.getStatusIcon(node.Status)
+
+	// Build node description
+	desc := fmt.Sprintf("%s:%d", node.Host, node.Port)
+	if node.ReplicaSet != "" {
+		desc += fmt.Sprintf(" [%s]", node.ReplicaSet)
+	}
+
+	// Build status line
+	statusLine := fmt.Sprintf("%s %s", statusIcon, node.Status)
+	if node.Uptime > 0 {
+		statusLine += fmt.Sprintf(" (uptime: %s)", formatDuration(node.Uptime))
+	}
+	if node.PID > 0 {
+		statusLine += fmt.Sprintf(" PID: %d", node.PID)
+	}
+
+	fmt.Printf("  %-40s %s\n", desc, statusLine)
+}
+
+// displayMonitoringHealth displays monitoring infrastructure health
+func (m *Manager) displayMonitoringHealth(mon health.MonitoringHealth, metadata *meta.ClusterMetadata) {
+	fmt.Println("\n" + strings.Repeat("━", 70))
+	fmt.Println("MONITORING")
+	fmt.Println(strings.Repeat("━", 70))
+
+	// Victoria Metrics
+	vmIcon := m.getStatusIcon(mon.VictoriaMetrics.Status)
+	fmt.Printf("Victoria Metrics: %s %s\n", vmIcon, mon.VictoriaMetrics.Status)
+	if mon.VictoriaMetrics.URL != "" {
+		fmt.Printf("  URL: %s\n", mon.VictoriaMetrics.URL)
+	}
+
+	// Grafana
+	grafanaIcon := m.getStatusIcon(mon.Grafana.Status)
+	fmt.Printf("\nGrafana:          %s %s\n", grafanaIcon, mon.Grafana.Status)
+	if mon.Grafana.URL != "" {
+		fmt.Printf("  URL: %s\n", mon.Grafana.URL)
+		fmt.Printf("  User: admin\n")
+	}
+
+	// Exporters
+	if len(mon.Exporters) > 0 {
+		fmt.Println("\nExporters:")
+		for _, exp := range mon.Exporters {
+			icon := m.getStatusIcon(exp.Status)
+			fmt.Printf("  %s (%s:%d): %s %s\n",
+				exp.Type, exp.Host, exp.Port, icon, exp.Status)
+		}
+	}
+}
+
+// displayPortMapping displays all ports used by the cluster
+func (m *Manager) displayPortMapping(ports health.PortMapping) {
+	fmt.Println("\n" + strings.Repeat("━", 70))
+	fmt.Println("PORTS")
+	fmt.Println(strings.Repeat("━", 70))
+
+	if len(ports.MongoDB) > 0 {
+		fmt.Println("\nMongoDB:")
+		for _, port := range ports.MongoDB {
+			icon := m.getStatusIcon(port.Status)
+			fmt.Printf("  %s:%d  %s %s - %s\n",
+				port.Host, port.Port, icon, port.Status, port.Description)
+		}
+	}
+
+	if len(ports.Monitoring) > 0 {
+		fmt.Println("\nMonitoring:")
+		for _, port := range ports.Monitoring {
+			icon := m.getStatusIcon(port.Status)
+			fmt.Printf("  %s:%d  %s %s - %s\n",
+				port.Host, port.Port, icon, port.Status, port.Description)
+		}
+	}
+
+	if len(ports.Supervisor) > 0 {
+		fmt.Println("\nSupervisor APIs:")
+		for _, port := range ports.Supervisor {
+			fmt.Printf("  %s:%d  - %s\n",
+				port.Host, port.Port, port.Description)
+		}
+	}
+}
+
+// getStatusIcon returns a visual indicator for status
+func (m *Manager) getStatusIcon(status string) string {
+	switch status {
+	case "running":
+		return "✓"
+	case "stopped":
+		return "✗"
+	case "starting":
+		return "⟳"
+	case "failed":
+		return "✗"
+	default:
+		return "?"
+	}
+}
+
+// formatDuration formats a duration in a human-readable way
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	} else if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	} else if d < 24*time.Hour {
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd %dh", days, hours)
 }
 
 // displayYAML displays cluster info in YAML format

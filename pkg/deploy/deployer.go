@@ -7,31 +7,36 @@ import (
 	"path/filepath"
 
 	"github.com/zph/mup/pkg/executor"
+	"github.com/zph/mup/pkg/monitoring"
+	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/template"
 	"github.com/zph/mup/pkg/topology"
 )
 
 // Deployer manages the deployment of MongoDB clusters
 type Deployer struct {
-	clusterName string
-	version     string
-	topology    *topology.Topology
-	executors   map[string]executor.Executor // host -> executor
-	metaDir     string                       // cluster metadata directory
-	isLocal     bool                         // local vs remote deployment
-	nodePIDs    map[string]int               // "host:port" -> PID
-	binPath     string                       // Path to MongoDB binaries (from binary manager)
-	templateMgr *template.Manager            // Template manager for config generation
+	clusterName    string
+	version        string
+	topology       *topology.Topology
+	executors      map[string]executor.Executor // host -> executor
+	metaDir        string                       // cluster metadata directory
+	isLocal        bool                         // local vs remote deployment
+	binPath        string                       // Path to MongoDB binaries (from binary manager)
+	templateMgr    *template.Manager            // Template manager for config generation
+	supervisorMgr  *supervisor.Manager          // Supervisor manager for process management
+	monitoringMgr  *monitoring.Manager          // Monitoring manager
+	monitoringEnabled bool                      // Whether monitoring is enabled
 }
 
 // DeployConfig contains deployment configuration
 type DeployConfig struct {
-	ClusterName  string
-	Version      string
-	TopologyFile string
-	SSHUser      string
-	IdentityFile string
-	SkipConfirm  bool
+	ClusterName        string
+	Version            string
+	TopologyFile       string
+	SSHUser            string
+	IdentityFile       string
+	SkipConfirm        bool
+	DisableMonitoring  bool // Disable monitoring deployment
 }
 
 // NewDeployer creates a new deployer
@@ -108,17 +113,47 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		return nil, fmt.Errorf("failed to initialize template manager: %w", err)
 	}
 
+	// Initialize supervisor manager
+	supervisorMgr, err := supervisor.NewManager(metaDir, cfg.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize supervisor manager: %w", err)
+	}
+
+	// Initialize monitoring manager if enabled
+	var monitoringMgr *monitoring.Manager
+	monitoringEnabled := !cfg.DisableMonitoring
+
+	if monitoringEnabled {
+		monitoringDir := filepath.Join(homeDir, ".mup", "monitoring")
+		monitoringConfig := monitoring.DefaultConfig()
+
+		// Get local executor for monitoring (monitoring runs locally even for remote clusters)
+		localExec := executor.NewLocalExecutor()
+
+		monitoringMgr, err = monitoring.NewManager(monitoringDir, monitoringConfig, localExec)
+		if err != nil {
+			fmt.Printf("Warning: Failed to initialize monitoring (will deploy without monitoring): %v\n", err)
+			monitoringEnabled = false
+		} else {
+			fmt.Println("✓ Monitoring enabled")
+		}
+	} else {
+		fmt.Println("✓ Monitoring disabled (--no-monitoring)")
+	}
+
 	fmt.Println("✓ Phase 1 complete: Topology validated")
 
 	return &Deployer{
-		clusterName: cfg.ClusterName,
-		version:     cfg.Version,
-		topology:    topo,
-		executors:   executors,
-		metaDir:     metaDir,
-		isLocal:     isLocal,
-		nodePIDs:    make(map[string]int),
-		templateMgr: templateMgr,
+		clusterName:       cfg.ClusterName,
+		version:           cfg.Version,
+		topology:          topo,
+		executors:         executors,
+		metaDir:           metaDir,
+		isLocal:           isLocal,
+		templateMgr:       templateMgr,
+		supervisorMgr:     supervisorMgr,
+		monitoringMgr:     monitoringMgr,
+		monitoringEnabled: monitoringEnabled,
 	}, nil
 }
 
@@ -137,6 +172,14 @@ func (d *Deployer) Deploy(ctx context.Context) error {
 	// Phase 4: Initialize
 	if err := d.initialize(ctx); err != nil {
 		return fmt.Errorf("phase 4 (initialize) failed: %w", err)
+	}
+
+	// Phase 4.5: Deploy Monitoring (if enabled)
+	if d.monitoringEnabled {
+		if err := d.deployMonitoring(ctx); err != nil {
+			fmt.Printf("Warning: Monitoring deployment failed (non-fatal): %v\n", err)
+			// Don't fail the entire deployment if monitoring fails
+		}
 	}
 
 	// Phase 5: Finalize

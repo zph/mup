@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 
+	"github.com/zph/mup/pkg/meta"
 	"github.com/zph/mup/pkg/topology"
 )
 
@@ -35,15 +36,23 @@ func (d *Deployer) finalize(ctx context.Context) error {
 
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
-	Name              string               `yaml:"name"`
-	Version           string               `yaml:"version"`
-	BinPath           string               `yaml:"bin_path"`     // Path to MongoDB binaries
-	CreatedAt         time.Time            `yaml:"created_at"`
-	Status            string               `yaml:"status"`
-	Topology          *topology.Topology   `yaml:"topology"`
-	DeployMode        string               `yaml:"deploy_mode"` // "local" or "remote"
-	Nodes             []NodeMetadata       `yaml:"nodes"`
-	ConnectionCommand string               `yaml:"connection_command,omitempty"` // Command to connect to cluster
+	Name              string                   `yaml:"name"`
+	Version           string                   `yaml:"version"`
+	BinPath           string                   `yaml:"bin_path"`     // Path to MongoDB binaries
+	CreatedAt         time.Time                `yaml:"created_at"`
+	Status            string                   `yaml:"status"`
+	Topology          *topology.Topology       `yaml:"topology"`
+	DeployMode        string                   `yaml:"deploy_mode"` // "local" or "remote"
+	Nodes             []NodeMetadata           `yaml:"nodes"`
+	ConnectionCommand string                   `yaml:"connection_command,omitempty"` // Command to connect to cluster
+
+	// Supervisord fields
+	SupervisorConfigPath string `yaml:"supervisor_config_path,omitempty"` // Path to supervisor.ini
+	SupervisorPIDFile    string `yaml:"supervisor_pid_file,omitempty"`    // Path to supervisor.pid
+	SupervisorRunning    bool   `yaml:"supervisor_running,omitempty"`     // Whether supervisord is running
+
+	// Monitoring fields
+	Monitoring *meta.MonitoringMetadata `yaml:"monitoring,omitempty"`
 }
 
 // NodeMetadata represents metadata for a single node
@@ -56,7 +65,11 @@ type NodeMetadata struct {
 	LogDir     string `yaml:"log_dir"`
 	ConfigDir  string `yaml:"config_dir"`
 	ConfigFile string `yaml:"config_file"`
-	PID        int    `yaml:"pid,omitempty"`
+	PID        int    `yaml:"pid,omitempty"` // Deprecated: supervisord manages PIDs now
+
+	// Supervisord fields
+	SupervisorProgramName string `yaml:"supervisor_program_name,omitempty"` // Name in supervisor config (e.g., "mongod-27017")
+	SupervisorConfigFile  string `yaml:"supervisor_config_file,omitempty"`  // Path to node's supervisor config
 }
 
 // saveMetadata saves the cluster metadata to disk
@@ -87,6 +100,7 @@ func (d *Deployer) saveMetadata(ctx context.Context) error {
 		}(),
 		Nodes:             d.collectNodeMetadata(),
 		ConnectionCommand: connectionCommand,
+		Monitoring:        d.GetMonitoringMetadata(),
 	}
 
 	// Serialize to YAML
@@ -112,49 +126,85 @@ func (d *Deployer) collectNodeMetadata() []NodeMetadata {
 	// Collect mongod nodes
 	for _, node := range d.topology.Mongod {
 		configDir := d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)
-		nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
+		programName := fmt.Sprintf("mongod-%d", node.Port)
+		supervisorConfigFile := filepath.Join(d.metaDir, "conf", fmt.Sprintf("%s-%d", node.Host, node.Port), "supervisor-mongod.ini")
+
+		// Get PID from supervisor if available
+		var pid int
+		if d.supervisorMgr != nil {
+			if status, err := d.supervisorMgr.GetProcessStatus(programName); err == nil {
+				pid = status.PID
+			}
+		}
+
 		nodes = append(nodes, NodeMetadata{
-			Type:       "mongod",
-			Host:       node.Host,
-			Port:       node.Port,
-			ReplicaSet: node.ReplicaSet,
-			DataDir:    d.getNodeDataDir(node.Host, node.Port, node.DataDir),
-			LogDir:     d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-			ConfigDir:  configDir,
-			ConfigFile: filepath.Join(configDir, "mongod.conf"),
-			PID:        d.nodePIDs[nodeKey],
+			Type:                  "mongod",
+			Host:                  node.Host,
+			Port:                  node.Port,
+			ReplicaSet:            node.ReplicaSet,
+			DataDir:               d.getNodeDataDir(node.Host, node.Port, node.DataDir),
+			LogDir:                d.getNodeLogDir(node.Host, node.Port, node.LogDir),
+			ConfigDir:             configDir,
+			ConfigFile:            filepath.Join(configDir, "mongod.conf"),
+			SupervisorProgramName: programName,
+			SupervisorConfigFile:  supervisorConfigFile,
+			PID:                   pid,
 		})
 	}
 
 	// Collect mongos nodes
 	for _, node := range d.topology.Mongos {
 		configDir := d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)
-		nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
+		programName := fmt.Sprintf("mongos-%d", node.Port)
+		supervisorConfigFile := filepath.Join(d.metaDir, "conf", fmt.Sprintf("%s-%d", node.Host, node.Port), "supervisor-mongos.ini")
+
+		// Get PID from supervisor if available
+		var pid int
+		if d.supervisorMgr != nil {
+			if status, err := d.supervisorMgr.GetProcessStatus(programName); err == nil {
+				pid = status.PID
+			}
+		}
+
 		nodes = append(nodes, NodeMetadata{
-			Type:       "mongos",
-			Host:       node.Host,
-			Port:       node.Port,
-			LogDir:     d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-			ConfigDir:  configDir,
-			ConfigFile: filepath.Join(configDir, "mongos.conf"),
-			PID:        d.nodePIDs[nodeKey],
+			Type:                  "mongos",
+			Host:                  node.Host,
+			Port:                  node.Port,
+			LogDir:                d.getNodeLogDir(node.Host, node.Port, node.LogDir),
+			ConfigDir:             configDir,
+			ConfigFile:            filepath.Join(configDir, "mongos.conf"),
+			SupervisorProgramName: programName,
+			SupervisorConfigFile:  supervisorConfigFile,
+			PID:                   pid,
 		})
 	}
 
 	// Collect config server nodes
 	for _, node := range d.topology.ConfigSvr {
 		configDir := d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)
-		nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
+		programName := fmt.Sprintf("mongod-%d", node.Port)
+		supervisorConfigFile := filepath.Join(d.metaDir, "conf", fmt.Sprintf("%s-%d", node.Host, node.Port), "supervisor-mongod.ini")
+
+		// Get PID from supervisor if available
+		var pid int
+		if d.supervisorMgr != nil {
+			if status, err := d.supervisorMgr.GetProcessStatus(programName); err == nil {
+				pid = status.PID
+			}
+		}
+
 		nodes = append(nodes, NodeMetadata{
-			Type:       "config",
-			Host:       node.Host,
-			Port:       node.Port,
-			ReplicaSet: node.ReplicaSet,
-			DataDir:    d.getNodeDataDir(node.Host, node.Port, node.DataDir),
-			LogDir:     d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-			ConfigDir:  configDir,
-			ConfigFile: filepath.Join(configDir, "mongod.conf"),
-			PID:        d.nodePIDs[nodeKey],
+			Type:                  "config",
+			Host:                  node.Host,
+			Port:                  node.Port,
+			ReplicaSet:            node.ReplicaSet,
+			DataDir:               d.getNodeDataDir(node.Host, node.Port, node.DataDir),
+			LogDir:                d.getNodeLogDir(node.Host, node.Port, node.LogDir),
+			ConfigDir:             configDir,
+			ConfigFile:            filepath.Join(configDir, "mongod.conf"),
+			SupervisorProgramName: programName,
+			SupervisorConfigFile:  supervisorConfigFile,
+			PID:                   pid,
 		})
 	}
 
@@ -222,6 +272,16 @@ func (d *Deployer) displayClusterInfo() {
 	fmt.Printf("Stop cluster:    mup cluster stop %s\n", d.clusterName)
 	fmt.Printf("Cluster status:  mup cluster display %s\n", d.clusterName)
 	fmt.Printf("Destroy cluster: mup cluster destroy %s\n", d.clusterName)
+
+	// Display monitoring info if enabled
+	if d.monitoringEnabled && d.GetMonitoringMetadata() != nil {
+		fmt.Println("\nMonitoring:")
+		fmt.Println(repeatString("-", 60))
+		monitoringMeta := d.GetMonitoringMetadata()
+		fmt.Printf("Grafana:         %s\n", monitoringMeta.GrafanaURL)
+		fmt.Printf("Victoria Metrics: %s\n", monitoringMeta.VictoriaMetricsURL)
+		fmt.Printf("\nView dashboards: mup monitoring dashboard %s\n", d.clusterName)
+	}
 
 	fmt.Println("\n" + repeatString("=", 60))
 }

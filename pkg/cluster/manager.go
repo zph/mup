@@ -6,6 +6,7 @@ import (
 
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/supervisor"
 )
 
 // Manager manages cluster lifecycle operations
@@ -25,7 +26,7 @@ func NewManager() (*Manager, error) {
 	}, nil
 }
 
-// Start starts a cluster
+// Start starts a cluster using supervisor
 func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter string) error {
 	// Load metadata
 	metadata, err := m.metaMgr.Load(clusterName)
@@ -33,49 +34,82 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 		return err
 	}
 
-	// Create executors
-	executors, err := m.createExecutors(metadata)
+	// Load supervisor manager
+	clusterDir := m.metaMgr.GetClusterDir(clusterName)
+	supMgr, err := supervisor.LoadManager(clusterDir, clusterName)
 	if err != nil {
-		return fmt.Errorf("failed to create executors: %w", err)
+		return fmt.Errorf("failed to load supervisor: %w", err)
 	}
-	defer m.closeExecutors(executors)
 
-	fmt.Printf("Starting cluster '%s'...\n", clusterName)
+	fmt.Printf("Starting cluster '%s' via supervisor...\n", clusterName)
 
-	// Start nodes
-	started := 0
+	// Start supervisor daemon if not already running
+	if !supMgr.IsRunning() {
+		fmt.Println("  Starting supervisor daemon...")
+		if err := supMgr.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start supervisor: %w", err)
+		}
+	}
+
+	// Collect program names to start in parallel
+	var programNames []string
+	var nodesToStart []*meta.NodeMetadata
+
 	for i := range metadata.Nodes {
-		node := &metadata.Nodes[i] // Use pointer to modify in place
+		node := &metadata.Nodes[i]
 		if nodeFilter != "" && fmt.Sprintf("%s:%d", node.Host, node.Port) != nodeFilter {
 			continue
 		}
 
-		exec := executors[node.Host]
-		if err := m.startNode(exec, node, metadata.BinPath); err != nil {
-			return fmt.Errorf("failed to start %s %s:%d: %w", node.Type, node.Host, node.Port, err)
+		// Use supervisor program name to start the process
+		if node.SupervisorProgramName == "" {
+			return fmt.Errorf("node %s:%d missing supervisor program name - cluster may need redeployment", node.Host, node.Port)
 		}
 
-		fmt.Printf("  ✓ Started %s %s:%d (PID: %d)\n", node.Type, node.Host, node.Port, node.PID)
-		started++
+		programNames = append(programNames, node.SupervisorProgramName)
+		nodesToStart = append(nodesToStart, node)
 	}
+
+	// Start all processes in parallel
+	if len(programNames) > 0 {
+		fmt.Printf("  Starting %d node(s) in parallel...\n", len(programNames))
+		if err := supMgr.StartProcesses(programNames); err != nil {
+			return fmt.Errorf("failed to start processes: %w", err)
+		}
+
+		// Get status for each node and save PIDs
+		for _, node := range nodesToStart {
+			status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
+			if err != nil {
+				fmt.Printf("  ! Started %s %s:%d (status check failed: %v)\n", node.Type, node.Host, node.Port, err)
+			} else {
+				fmt.Printf("  ✓ Started %s %s:%d (PID: %d, state: %s)\n", node.Type, node.Host, node.Port, status.PID, status.State)
+				// Save PID to metadata
+				node.PID = status.PID
+			}
+		}
+	}
+
+	started := len(programNames)
 
 	if started == 0 {
 		return fmt.Errorf("no nodes matched filter '%s'", nodeFilter)
 	}
 
-	// Update status and save metadata (including PIDs)
+	// Update status and save metadata
 	if nodeFilter == "" {
 		metadata.Status = "running"
+		metadata.SupervisorRunning = true
 	}
 	if err := m.metaMgr.Save(metadata); err != nil {
 		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
-	fmt.Printf("\n✓ Started %d node(s)\n", started)
+	fmt.Printf("\n✓ Started %d node(s) via supervisor\n", started)
 	return nil
 }
 
-// Stop stops a cluster
+// Stop stops a cluster using supervisor
 func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter string) error {
 	// Load metadata
 	metadata, err := m.metaMgr.Load(clusterName)
@@ -83,25 +117,41 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 		return err
 	}
 
-	// Create executors
-	executors, err := m.createExecutors(metadata)
+	// Load supervisor manager
+	clusterDir := m.metaMgr.GetClusterDir(clusterName)
+	supMgr, err := supervisor.LoadManager(clusterDir, clusterName)
 	if err != nil {
-		return fmt.Errorf("failed to create executors: %w", err)
+		return fmt.Errorf("failed to load supervisor: %w", err)
 	}
-	defer m.closeExecutors(executors)
 
 	fmt.Printf("Stopping cluster '%s'...\n", clusterName)
 
-	// Stop nodes
+	// Check if supervisor is running
+	if !supMgr.IsRunning() {
+		fmt.Println("  ! Supervisor daemon not running - processes may already be stopped")
+		metadata.Status = "stopped"
+		metadata.SupervisorRunning = false
+		if err := m.metaMgr.Save(metadata); err != nil {
+			return fmt.Errorf("failed to update metadata: %w", err)
+		}
+		return nil
+	}
+
+	// Stop nodes via supervisor
 	stopped := 0
 	for i := range metadata.Nodes {
-		node := &metadata.Nodes[i] // Use pointer to modify in place
+		node := &metadata.Nodes[i]
 		if nodeFilter != "" && fmt.Sprintf("%s:%d", node.Host, node.Port) != nodeFilter {
 			continue
 		}
 
-		exec := executors[node.Host]
-		if err := m.stopNode(exec, node); err != nil {
+		// Use supervisor program name to stop the process
+		if node.SupervisorProgramName == "" {
+			fmt.Printf("  ! Skipping %s %s:%d (no supervisor program name)\n", node.Type, node.Host, node.Port)
+			continue
+		}
+
+		if err := supMgr.StopProcess(node.SupervisorProgramName); err != nil {
 			// Log error but continue
 			fmt.Printf("  ! Failed to stop %s %s:%d: %v\n", node.Type, node.Host, node.Port, err)
 			continue
@@ -115,10 +165,17 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 		return fmt.Errorf("no nodes matched filter '%s'", nodeFilter)
 	}
 
-	// Update status and save metadata (including cleared PIDs)
+	// If stopping all nodes, stop supervisor daemon too
 	if nodeFilter == "" {
+		fmt.Println("  Stopping supervisor daemon...")
+		if err := supMgr.Stop(ctx); err != nil {
+			fmt.Printf("  ! Warning: failed to stop supervisor daemon: %v\n", err)
+		}
 		metadata.Status = "stopped"
+		metadata.SupervisorRunning = false
 	}
+
+	// Update status and save metadata
 	if err := m.metaMgr.Save(metadata); err != nil {
 		return fmt.Errorf("failed to update metadata: %w", err)
 	}

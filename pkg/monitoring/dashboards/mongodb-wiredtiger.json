@@ -1,0 +1,468 @@
+{
+  "dashboard": {
+    "title": "MongoDB WiredTiger Storage Engine",
+    "tags": ["mongodb", "wiredtiger", "storage", "mup"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "WiredTiger Cache Usage",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "id": 1,
+        "targets": [
+          {
+            "expr": "mongodb_ss_wt_cache_bytes{instance=~\"$instance\",type=\"total\"}",
+            "legendFormat": "{{instance}} - Total Cache",
+            "refId": "A"
+          },
+          {
+            "expr": "mongodb_ss_wt_cache_bytes{instance=~\"$instance\",type=\"dirty\"}",
+            "legendFormat": "{{instance}} - Dirty Cache",
+            "refId": "B"
+          },
+          {
+            "expr": "mongodb_ss_wt_cache_max_bytes{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} - Max Cache",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "axisLabel": "bytes",
+              "fillOpacity": 10,
+              "lineWidth": 2
+            },
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.8},
+                {"color": "red", "value": 0.95}
+              ]
+            }
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": ["mean", "lastNotNull", "max"],
+            "displayMode": "table",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "title": "Cache Utilization %",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+        "id": 2,
+        "targets": [
+          {
+            "expr": "(mongodb_ss_wt_cache_bytes{instance=~\"$instance\",type=\"total\"} / mongodb_ss_wt_cache_max_bytes{instance=~\"$instance\"}) * 100",
+            "legendFormat": "{{instance}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "orange", "value": 85},
+                {"color": "red", "value": 95}
+              ]
+            },
+            "max": 100,
+            "min": 0
+          }
+        },
+        "options": {
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true
+        }
+      },
+      {
+        "title": "Dirty Cache %",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+        "id": 3,
+        "targets": [
+          {
+            "expr": "(mongodb_ss_wt_cache_bytes{instance=~\"$instance\",type=\"dirty\"} / mongodb_ss_wt_cache_bytes{instance=~\"$instance\",type=\"total\"}) * 100",
+            "legendFormat": "{{instance}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 50},
+                {"color": "orange", "value": 70},
+                {"color": "red", "value": 85}
+              ]
+            },
+            "max": 100,
+            "min": 0
+          }
+        }
+      },
+      {
+        "title": "Cache Pages Read/Written",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "id": 4,
+        "targets": [
+          {
+            "expr": "rate(mongodb_ss_wt_cache_pages{instance=~\"$instance\",type=\"read\"}[5m])",
+            "legendFormat": "{{instance}} - Pages Read/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_ss_wt_cache_pages{instance=~\"$instance\",type=\"written\"}[5m])",
+            "legendFormat": "{{instance}} - Pages Written/sec",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Cache Eviction Rate",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "id": 5,
+        "targets": [
+          {
+            "expr": "rate(mongodb_ss_wt_cache_evicted_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "{{instance}} - Evictions/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_ss_wt_cache_evicted_total{instance=~\"$instance\",type=\"modified\"}[5m])",
+            "legendFormat": "{{instance}} - Modified Evictions/sec",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(mongodb_ss_wt_cache_evicted_total{instance=~\"$instance\",type=\"unmodified\"}[5m])",
+            "legendFormat": "{{instance}} - Unmodified Evictions/sec",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [100],
+                "type": "gt"
+              },
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"params": [], "type": "avg"},
+              "type": "query"
+            }
+          ],
+          "message": "High cache eviction rate detected"
+        }
+      },
+      {
+        "title": "WiredTiger Transactions",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "id": 6,
+        "targets": [
+          {
+            "expr": "rate(mongodb_ss_wt_txn_transactions_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "{{instance}} - Transactions/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_ss_wt_txn_transactions_total{instance=~\"$instance\",type=\"committed\"}[5m])",
+            "legendFormat": "{{instance}} - Committed/sec",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(mongodb_ss_wt_txn_transactions_total{instance=~\"$instance\",type=\"rolledback\"}[5m])",
+            "legendFormat": "{{instance}} - Rolled Back/sec",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Transaction Checkpoints",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "id": 7,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_checkpoint_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "{{instance}} - Checkpoints/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "mongodb_mongod_wiredtiger_checkpoint_time_milliseconds{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} - Checkpoint Duration",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "WiredTiger Concurrent Transactions",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "id": 8,
+        "targets": [
+          {
+            "expr": "mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"read\"}",
+            "legendFormat": "{{instance}} - Read Tickets Available",
+            "refId": "A"
+          },
+          {
+            "expr": "mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"write\"}",
+            "legendFormat": "{{instance}} - Write Tickets Available",
+            "refId": "B"
+          },
+          {
+            "expr": "mongodb_mongod_wiredtiger_concurrent_transactions_available_tickets{instance=~\"$instance\",type=\"read\"}",
+            "legendFormat": "{{instance}} - Read Tickets Used",
+            "refId": "C"
+          },
+          {
+            "expr": "mongodb_mongod_wiredtiger_concurrent_transactions_available_tickets{instance=~\"$instance\",type=\"write\"}",
+            "legendFormat": "{{instance}} - Write Tickets Used",
+            "refId": "D"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "title": "Ticket Utilization %",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "id": 9,
+        "targets": [
+          {
+            "expr": "((mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"read\"} - mongodb_mongod_wiredtiger_concurrent_transactions_available_tickets{instance=~\"$instance\",type=\"read\"}) / mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"read\"}) * 100",
+            "legendFormat": "{{instance}} - Read Tickets Used %",
+            "refId": "A"
+          },
+          {
+            "expr": "((mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"write\"} - mongodb_mongod_wiredtiger_concurrent_transactions_available_tickets{instance=~\"$instance\",type=\"write\"}) / mongodb_mongod_wiredtiger_concurrent_transactions_total_tickets{instance=~\"$instance\",type=\"write\"}) * 100",
+            "legendFormat": "{{instance}} - Write Tickets Used %",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "max": 100,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "red", "value": 90}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "WiredTiger Sessions",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+        "id": 10,
+        "targets": [
+          {
+            "expr": "mongodb_mongod_wiredtiger_session_open_sessions{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} - Open Sessions",
+            "refId": "A"
+          },
+          {
+            "expr": "mongodb_mongod_wiredtiger_session_open_cursors_total{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} - Open Cursors",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Cache Activity Heatmap",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+        "id": 11,
+        "targets": [
+          {
+            "expr": "rate(mongodb_ss_wt_cache_pages{instance=~\"$instance\"}[5m])",
+            "legendFormat": "{{instance}} - {{type}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "fillOpacity": 70,
+              "lineWidth": 0,
+              "stacking": {"mode": "normal"}
+            }
+          }
+        }
+      },
+      {
+        "title": "Block Manager Operations",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "id": 12,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_blockmanager_blocks_total{instance=~\"$instance\",type=\"read\"}[5m])",
+            "legendFormat": "{{instance}} - Blocks Read/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_blockmanager_blocks_total{instance=~\"$instance\",type=\"written\"}[5m])",
+            "legendFormat": "{{instance}} - Blocks Written/sec",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Block Manager Bytes",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "id": 13,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_blockmanager_bytes_total{instance=~\"$instance\",type=\"read\"}[5m])",
+            "legendFormat": "{{instance}} - Bytes Read/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_blockmanager_bytes_total{instance=~\"$instance\",type=\"written\"}[5m])",
+            "legendFormat": "{{instance}} - Bytes Written/sec",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps"
+          }
+        }
+      },
+      {
+        "title": "Log Operations",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48},
+        "id": 14,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_log_operations_total{instance=~\"$instance\",type=\"write\"}[5m])",
+            "legendFormat": "{{instance}} - Log Writes/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_log_operations_total{instance=~\"$instance\",type=\"sync\"}[5m])",
+            "legendFormat": "{{instance}} - Log Syncs/sec",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_log_operations_total{instance=~\"$instance\",type=\"scan\"}[5m])",
+            "legendFormat": "{{instance}} - Log Scans/sec",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Log Bytes Written",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48},
+        "id": 15,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_wiredtiger_log_bytes_total{instance=~\"$instance\",type=\"written\"}[5m])",
+            "legendFormat": "{{instance}} - Log Bytes/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps"
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(mongodb_up, instance)",
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "multi": true,
+          "includeAll": true,
+          "refresh": 1
+        }
+      ]
+    }
+  }
+}

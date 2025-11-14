@@ -583,14 +583,14 @@ func (d *Deployer) generateMongosConfigs(ctx context.Context) error {
 	return nil
 }
 
-// startMongosProcesses starts all mongos processes
+// startMongosProcesses starts all mongos processes via supervisor
 // This is called after config servers are initialized as a replica set
 func (d *Deployer) startMongosProcesses(ctx context.Context) error {
 	if len(d.topology.Mongos) == 0 {
 		return nil
 	}
 
-	fmt.Println("Starting mongos processes...")
+	fmt.Println("Starting mongos processes via supervisor...")
 
 	// Final port verification before starting mongos
 	for _, node := range d.topology.Mongos {
@@ -604,9 +604,12 @@ func (d *Deployer) startMongosProcesses(ctx context.Context) error {
 		}
 	}
 
-	// Start mongos processes
+	// Start mongos processes via supervisor
 	for _, node := range d.topology.Mongos {
-		if err := d.startMongos(node); err != nil {
+		programName := fmt.Sprintf("mongos-%d", node.Port)
+		fmt.Printf("  Starting mongos %s:%d via supervisor (program: %s)\n",
+			node.Host, node.Port, programName)
+		if err := d.supervisorMgr.StartProcess(programName); err != nil {
 			return fmt.Errorf("failed to start mongos %s:%d: %w",
 				node.Host, node.Port, err)
 		}

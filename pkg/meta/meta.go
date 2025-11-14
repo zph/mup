@@ -22,6 +22,40 @@ type ClusterMetadata struct {
 	DeployMode        string               `yaml:"deploy_mode"` // "local" or "remote"
 	Nodes             []NodeMetadata       `yaml:"nodes"`
 	ConnectionCommand string               `yaml:"connection_command,omitempty"` // Command to connect to cluster
+
+	// Supervisord fields
+	SupervisorConfigPath string `yaml:"supervisor_config_path,omitempty"` // Path to supervisor.ini
+	SupervisorPIDFile    string `yaml:"supervisor_pid_file,omitempty"`    // Path to supervisor.pid
+	SupervisorRunning    bool   `yaml:"supervisor_running,omitempty"`     // Whether supervisord is running
+
+	// Monitoring fields
+	Monitoring *MonitoringMetadata `yaml:"monitoring,omitempty"`
+}
+
+// MonitoringMetadata tracks monitoring infrastructure state
+type MonitoringMetadata struct {
+	Enabled             bool                      `yaml:"enabled"`
+	VictoriaMetricsURL  string                    `yaml:"victoria_metrics_url,omitempty"`
+	GrafanaURL          string                    `yaml:"grafana_url,omitempty"`
+	NodeExporters       []NodeExporterMetadata    `yaml:"node_exporters,omitempty"`
+	MongoDBExporters    []MongoDBExporterMetadata `yaml:"mongodb_exporters,omitempty"`
+	SupervisorConfigPath string                   `yaml:"supervisor_config_path,omitempty"` // Monitoring supervisor.ini
+	SupervisorPIDFile    string                   `yaml:"supervisor_pid_file,omitempty"`
+}
+
+// NodeExporterMetadata tracks a node_exporter instance
+type NodeExporterMetadata struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	PID  int    `yaml:"pid,omitempty"`
+}
+
+// MongoDBExporterMetadata tracks a mongodb_exporter instance
+type MongoDBExporterMetadata struct {
+	Host         string `yaml:"host"`
+	ExporterPort int    `yaml:"exporter_port"`
+	MongoDBPort  int    `yaml:"mongodb_port"`
+	PID          int    `yaml:"pid,omitempty"`
 }
 
 // NodeMetadata represents metadata for a single node
@@ -34,7 +68,11 @@ type NodeMetadata struct {
 	LogDir     string `yaml:"log_dir"`
 	ConfigDir  string `yaml:"config_dir"`
 	ConfigFile string `yaml:"config_file"`
-	PID        int    `yaml:"pid,omitempty"`
+	PID        int    `yaml:"pid,omitempty"` // Deprecated: supervisord manages PIDs now
+
+	// Supervisord fields
+	SupervisorProgramName string `yaml:"supervisor_program_name,omitempty"` // Name in supervisor config (e.g., "mongod-27017")
+	SupervisorConfigFile  string `yaml:"supervisor_config_file,omitempty"`  // Path to node's supervisor config
 }
 
 // Manager manages cluster metadata

@@ -54,6 +54,19 @@ func (m *Manager) Destroy(ctx context.Context, clusterName string, keepData bool
 				fmt.Printf("  ! Failed to remove config directory %s: %v\n", node.ConfigDir, err)
 			}
 		}
+
+		// Remove supervisor config and logs
+		clusterDir := m.metaMgr.GetClusterDir(clusterName)
+		exec := executors["localhost"] // For local deployments
+		if metadata.SupervisorConfigPath != "" {
+			exec.RemoveFile(metadata.SupervisorConfigPath)
+		} else {
+			// Fallback to default location
+			exec.RemoveFile(clusterDir + "/supervisor.ini")
+		}
+		exec.RemoveFile(clusterDir + "/supervisor.log")
+		exec.RemoveFile(clusterDir + "/supervisor.pid")
+		fmt.Println("  ✓ Removed supervisor files")
 	}
 
 	// Delete metadata

@@ -4,20 +4,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
-	"github.com/zph/mup/pkg/logger"
+	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/template"
 	"github.com/zph/mup/pkg/topology"
 )
 
 // deploy implements Phase 3: Deploy
 // - Create directory structures
-// - Generate configuration files
-// - Start MongoDB processes
+// - Generate configuration files (MongoDB + Supervisord)
+// - Start supervisord and MongoDB processes
 func (d *Deployer) deploy(ctx context.Context) error {
 	fmt.Println("Phase 3: Deploy")
 	fmt.Println("===============")
@@ -27,17 +24,22 @@ func (d *Deployer) deploy(ctx context.Context) error {
 		return fmt.Errorf("failed to create directories: %w", err)
 	}
 
-	// Step 2: Generate and upload configurations
+	// Step 2: Generate and upload MongoDB configurations
 	if err := d.generateConfigurations(ctx); err != nil {
 		return fmt.Errorf("failed to generate configurations: %w", err)
 	}
 
-	// Step 3: Start MongoDB processes
+	// Step 3: Generate supervisord configurations
+	if err := d.generateSupervisorConfigs(ctx); err != nil {
+		return fmt.Errorf("failed to generate supervisor configs: %w", err)
+	}
+
+	// Step 4: Start supervisord and MongoDB processes
 	if err := d.startProcesses(ctx); err != nil {
 		return fmt.Errorf("failed to start processes: %w", err)
 	}
 
-	fmt.Println("✓ Phase 3 complete: MongoDB processes deployed")
+	fmt.Println("✓ Phase 3 complete: MongoDB processes deployed via supervisord")
 	return nil
 }
 
@@ -307,9 +309,25 @@ func (d *Deployer) generateConfigServerConfig(node topology.ConfigNode) error {
 	return nil
 }
 
-// startProcesses starts all MongoDB processes (except mongos)
+// generateSupervisorConfigs generates supervisord configuration files
+func (d *Deployer) generateSupervisorConfigs(ctx context.Context) error {
+	fmt.Println("Generating supervisord configuration files...")
+
+	// Create a ConfigGenerator for supervisor
+	gen := supervisor.NewConfigGenerator(d.metaDir, d.clusterName, d.topology, d.version, d.binPath)
+
+	// Generate all supervisor configs (main + per-node)
+	if err := gen.GenerateAll(); err != nil {
+		return fmt.Errorf("failed to generate supervisor configs: %w", err)
+	}
+
+	fmt.Println("  Generated supervisord configuration")
+	return nil
+}
+
+// startProcesses starts supervisord and all MongoDB processes
 func (d *Deployer) startProcesses(ctx context.Context) error {
-	fmt.Println("Starting MongoDB processes...")
+	fmt.Println("Starting supervisord and MongoDB processes...")
 
 	// Final port verification before starting any processes
 	// This catches any last-minute port conflicts
@@ -317,25 +335,54 @@ func (d *Deployer) startProcesses(ctx context.Context) error {
 		return fmt.Errorf("port verification failed: %w", err)
 	}
 
-	// Start config servers first (if sharded cluster)
-	for _, node := range d.topology.ConfigSvr {
-		if err := d.startConfigServer(node); err != nil {
-			return fmt.Errorf("failed to start config server %s:%d: %w",
-				node.Host, node.Port, err)
+	// Load the supervisor manager with the generated config
+	mgr, err := supervisor.LoadManager(d.metaDir, d.clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to load supervisor manager: %w", err)
+	}
+
+	// Start the supervisor daemon
+	fmt.Println("  Starting supervisord daemon...")
+	if err := mgr.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start supervisord: %w", err)
+	}
+
+	// Start config servers first (if sharded cluster) - in parallel
+	if len(d.topology.ConfigSvr) > 0 {
+		var configPrograms []string
+		for _, node := range d.topology.ConfigSvr {
+			programName := fmt.Sprintf("mongod-%d", node.Port)
+			configPrograms = append(configPrograms, programName)
+			fmt.Printf("  Config server %s:%d (program: %s)\n",
+				node.Host, node.Port, programName)
+		}
+		fmt.Printf("  Starting %d config server(s) in parallel...\n", len(configPrograms))
+		if err := mgr.StartProcesses(configPrograms); err != nil {
+			return fmt.Errorf("failed to start config servers: %w", err)
 		}
 	}
 
-	// Start mongod nodes
-	for _, node := range d.topology.Mongod {
-		if err := d.startMongod(node); err != nil {
-			return fmt.Errorf("failed to start mongod %s:%d: %w",
-				node.Host, node.Port, err)
+	// Start mongod nodes - in parallel
+	if len(d.topology.Mongod) > 0 {
+		var mongodPrograms []string
+		for _, node := range d.topology.Mongod {
+			programName := fmt.Sprintf("mongod-%d", node.Port)
+			mongodPrograms = append(mongodPrograms, programName)
+			fmt.Printf("  Mongod %s:%d (program: %s)\n",
+				node.Host, node.Port, programName)
+		}
+		fmt.Printf("  Starting %d mongod node(s) in parallel...\n", len(mongodPrograms))
+		if err := mgr.StartProcesses(mongodPrograms); err != nil {
+			return fmt.Errorf("failed to start mongod nodes: %w", err)
 		}
 	}
 
 	// NOTE: mongos nodes are NOT started here
 	// For sharded clusters, mongos must be started AFTER config servers
 	// are initialized as a replica set (in Phase 4: Initialize)
+
+	// Store supervisor manager for later use
+	d.supervisorMgr = mgr
 
 	return nil
 }
@@ -371,219 +418,6 @@ func (d *Deployer) verifyPortsBeforeStart() error {
 		}
 	}
 
-	return nil
-}
-
-// startMongod starts a mongod process
-func (d *Deployer) startMongod(node topology.MongodNode) error {
-	exec := d.executors[node.Host]
-
-	configPath := filepath.Join(
-		d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir),
-		"mongod.conf",
-	)
-
-	logPath := filepath.Join(
-		d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-		"mongod.log",
-	)
-
-	// Use full path to versioned binary
-	mongodPath := filepath.Join(d.binPath, "mongod")
-	command := fmt.Sprintf("%s --config %s", mongodPath, configPath)
-
-	logger.Debug("Starting mongod %s:%d", node.Host, node.Port)
-	logger.Debug("  Binary: %s", mongodPath)
-	logger.Debug("  Config: %s", configPath)
-	logger.Debug("  Command: %s", command)
-
-	pid, err := exec.Background(command)
-	if err != nil {
-		logger.Error("Failed to start mongod %s:%d: %v", node.Host, node.Port, err)
-		return fmt.Errorf("failed to start mongod: %w", err)
-	}
-
-	// Store PID for later use
-	nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
-	d.nodePIDs[nodeKey] = pid
-
-	logger.Debug("Mongod %s:%d started with PID %d", node.Host, node.Port, pid)
-
-	// Wait a moment and check if process is still running
-	time.Sleep(2 * time.Second)
-	running, err := exec.IsProcessRunning(pid)
-	if err != nil {
-		logger.Warn("Failed to check if mongod %s:%d is running: %v", node.Host, node.Port, err)
-	} else if !running {
-		// Process died - try to read log file for error details
-		logger.Error("Mongod %s:%d (PID: %d) died shortly after starting", node.Host, node.Port, pid)
-
-		// Try to read log file to show error
-		tempLogPath := filepath.Join(os.TempDir(), fmt.Sprintf("mongod-%s-%d.log", node.Host, node.Port))
-		if err := exec.DownloadFile(logPath, tempLogPath); err == nil {
-			if logContent, err := os.ReadFile(tempLogPath); err == nil {
-				// Show last 20 lines of log
-				lines := strings.Split(string(logContent), "\n")
-				start := len(lines) - 20
-				if start < 0 {
-					start = 0
-				}
-				fmt.Printf("  Error: mongod %s:%d died. Last log lines:\n", node.Host, node.Port)
-				for i := start; i < len(lines); i++ {
-					if strings.TrimSpace(lines[i]) != "" {
-						fmt.Printf("    %s\n", lines[i])
-					}
-				}
-			}
-			os.Remove(tempLogPath)
-		}
-
-		return fmt.Errorf("mongod %s:%d (PID: %d) died shortly after starting - check logs at %s", node.Host, node.Port, pid, logPath)
-	}
-
-	fmt.Printf("  Started mongod %s:%d (PID: %d)\n", node.Host, node.Port, pid)
-	return nil
-}
-
-// startMongos starts a mongos process
-func (d *Deployer) startMongos(node topology.MongosNode) error {
-	exec := d.executors[node.Host]
-
-	configPath := filepath.Join(
-		d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir),
-		"mongos.conf",
-	)
-
-	logPath := filepath.Join(
-		d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-		"mongos.log",
-	)
-
-	// Use full path to versioned binary
-	mongosPath := filepath.Join(d.binPath, "mongos")
-	command := fmt.Sprintf("%s --config %s", mongosPath, configPath)
-
-	logger.Debug("Starting mongos %s:%d", node.Host, node.Port)
-	logger.Debug("  Binary: %s", mongosPath)
-	logger.Debug("  Config: %s", configPath)
-	logger.Debug("  Command: %s", command)
-
-	pid, err := exec.Background(command)
-	if err != nil {
-		logger.Error("Failed to start mongos %s:%d: %v", node.Host, node.Port, err)
-		return fmt.Errorf("failed to start mongos: %w", err)
-	}
-
-	// Store PID for later use
-	nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
-	d.nodePIDs[nodeKey] = pid
-
-	logger.Debug("Mongos %s:%d started with PID %d", node.Host, node.Port, pid)
-
-	// Wait a moment and check if process is still running
-	time.Sleep(2 * time.Second)
-	running, err := exec.IsProcessRunning(pid)
-	if err != nil {
-		logger.Warn("Failed to check if mongos %s:%d is running: %v", node.Host, node.Port, err)
-	} else if !running {
-		// Process died - try to read log file for error details
-		logger.Error("Mongos %s:%d (PID: %d) died shortly after starting", node.Host, node.Port, pid)
-
-		// Try to read log file to show error
-		tempLogPath := filepath.Join(os.TempDir(), fmt.Sprintf("mongos-%s-%d.log", node.Host, node.Port))
-		if err := exec.DownloadFile(logPath, tempLogPath); err == nil {
-			if logContent, err := os.ReadFile(tempLogPath); err == nil {
-				// Show last 20 lines of log
-				lines := strings.Split(string(logContent), "\n")
-				start := len(lines) - 20
-				if start < 0 {
-					start = 0
-				}
-				fmt.Printf("  Error: mongos %s:%d died. Last log lines:\n", node.Host, node.Port)
-				for i := start; i < len(lines); i++ {
-					if strings.TrimSpace(lines[i]) != "" {
-						fmt.Printf("    %s\n", lines[i])
-					}
-				}
-			}
-			os.Remove(tempLogPath)
-		}
-
-		return fmt.Errorf("mongos %s:%d (PID: %d) died shortly after starting - check logs at %s", node.Host, node.Port, pid, logPath)
-	}
-
-	fmt.Printf("  Started mongos %s:%d (PID: %d, log: %s)\n", node.Host, node.Port, pid, logPath)
-	return nil
-}
-
-// startConfigServer starts a config server process
-func (d *Deployer) startConfigServer(node topology.ConfigNode) error {
-	exec := d.executors[node.Host]
-
-	configPath := filepath.Join(
-		d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir),
-		"mongod.conf",
-	)
-
-	logPath := filepath.Join(
-		d.getNodeLogDir(node.Host, node.Port, node.LogDir),
-		"mongod.log",
-	)
-
-	// Use full path to versioned binary
-	mongodPath := filepath.Join(d.binPath, "mongod")
-	command := fmt.Sprintf("%s --config %s", mongodPath, configPath)
-
-	logger.Debug("Starting config server %s:%d", node.Host, node.Port)
-	logger.Debug("  Binary: %s", mongodPath)
-	logger.Debug("  Config: %s", configPath)
-	logger.Debug("  Command: %s", command)
-
-	pid, err := exec.Background(command)
-	if err != nil {
-		logger.Error("Failed to start config server %s:%d: %v", node.Host, node.Port, err)
-		return fmt.Errorf("failed to start config server: %w", err)
-	}
-
-	// Store PID for later use
-	nodeKey := fmt.Sprintf("%s:%d", node.Host, node.Port)
-	d.nodePIDs[nodeKey] = pid
-
-	logger.Debug("Config server %s:%d started with PID %d", node.Host, node.Port, pid)
-
-	// Wait a moment and check if process is still running
-	time.Sleep(2 * time.Second)
-	running, err := exec.IsProcessRunning(pid)
-	if err != nil {
-		logger.Warn("Failed to check if config server %s:%d is running: %v", node.Host, node.Port, err)
-	} else if !running {
-		// Process died - try to read log file for error details
-		logger.Error("Config server %s:%d (PID: %d) died shortly after starting", node.Host, node.Port, pid)
-
-		// Try to read log file to show error
-		tempLogPath := filepath.Join(os.TempDir(), fmt.Sprintf("configsvr-%s-%d.log", node.Host, node.Port))
-		if err := exec.DownloadFile(logPath, tempLogPath); err == nil {
-			if logContent, err := os.ReadFile(tempLogPath); err == nil {
-				// Show last 20 lines of log
-				lines := strings.Split(string(logContent), "\n")
-				start := len(lines) - 20
-				if start < 0 {
-					start = 0
-				}
-				fmt.Printf("  Error: config server %s:%d died. Last log lines:\n", node.Host, node.Port)
-				for i := start; i < len(lines); i++ {
-					if strings.TrimSpace(lines[i]) != "" {
-						fmt.Printf("    %s\n", lines[i])
-					}
-				}
-			}
-			os.Remove(tempLogPath)
-		}
-
-		return fmt.Errorf("config server %s:%d (PID: %d) died shortly after starting - check logs at %s", node.Host, node.Port, pid, logPath)
-	}
-
-	fmt.Printf("  Started config server %s:%d (PID: %d)\n", node.Host, node.Port, pid)
 	return nil
 }
 

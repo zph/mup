@@ -1,0 +1,350 @@
+package supervisor
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Manager wraps supervisord binary functionality for managing MongoDB processes
+type Manager struct {
+	clusterDir  string
+	clusterName string
+	configPath  string
+	binaryPath  string // Path to supervisord binary
+}
+
+// ProcessStatus represents the state of a supervised process
+type ProcessStatus struct {
+	Name        string
+	State       string // RUNNING, STOPPED, STARTING, FATAL, etc.
+	PID         int
+	Uptime      int64
+	Description string
+}
+
+// NewManager creates a new supervisord manager for a cluster
+func NewManager(clusterDir, clusterName string) (*Manager, error) {
+	configPath := filepath.Join(clusterDir, "supervisor.ini")
+
+	// Get supervisord binary - cache in ~/.mup/storage/bin
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
+
+	binaryPath, err := GetSupervisordBinary(cacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
+	}
+
+	return &Manager{
+		clusterDir:  clusterDir,
+		clusterName: clusterName,
+		configPath:  configPath,
+		binaryPath:  binaryPath,
+	}, nil
+}
+
+// LoadManager loads an existing supervisord manager
+func LoadManager(clusterDir, clusterName string) (*Manager, error) {
+	mgr, err := NewManager(clusterDir, clusterName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify config exists
+	if _, err := os.Stat(mgr.configPath); err != nil {
+		return nil, fmt.Errorf("supervisor config not found at %s: %w", mgr.configPath, err)
+	}
+
+	return mgr, nil
+}
+
+// IsRunning checks if supervisord daemon is running for this cluster
+func (m *Manager) IsRunning() bool {
+	pidFile := filepath.Join(m.clusterDir, "supervisor.pid")
+
+	// Check if PID file exists
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+
+	// Parse PID
+	var pid int
+	if _, err := fmt.Sscanf(string(pidBytes), "%d", &pid); err != nil {
+		return false
+	}
+
+	// Check if process is running (Unix: kill -0 checks without actually killing)
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+
+	// On Unix, Signal(0) checks if process exists without sending a real signal
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// Start starts the supervisord daemon
+func (m *Manager) Start(ctx context.Context) error {
+	if m.IsRunning() {
+		fmt.Printf("Supervisor already running for cluster %s\n", m.clusterName)
+		return nil
+	}
+
+	fmt.Printf("Starting supervisor daemon for cluster %s...\n", m.clusterName)
+
+	// Start supervisord binary as daemon
+	cmd := exec.Command(m.binaryPath, "-c", m.configPath)
+
+	// Run in background
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start supervisord: %w", err)
+	}
+
+	// Wait a moment for daemon to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify it's running
+	if !m.IsRunning() {
+		return fmt.Errorf("supervisord failed to start - check %s/supervisor.log", m.clusterDir)
+	}
+
+	fmt.Printf("  ✓ Supervisor daemon started\n")
+	return nil
+}
+
+// ctl runs a supervisord ctl command
+func (m *Manager) ctl(args ...string) *exec.Cmd {
+	// Use: supervisord ctl -c config.ini <command>
+	ctlArgs := append([]string{"ctl", "-c", m.configPath}, args...)
+	return exec.Command(m.binaryPath, ctlArgs...)
+}
+
+// Stop stops the supervisord daemon
+func (m *Manager) Stop(ctx context.Context) error {
+	if !m.IsRunning() {
+		return nil
+	}
+
+	fmt.Printf("Stopping supervisor daemon for cluster %s...\n", m.clusterName)
+
+	// Use supervisord ctl to shutdown
+	cmd := m.ctl("shutdown")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop supervisord: %w", err)
+	}
+
+	// Wait for shutdown
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if !m.IsRunning() {
+			fmt.Printf("  ✓ Supervisor daemon stopped\n")
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("supervisord did not stop within 30 seconds")
+}
+
+// StartProcess starts a specific process
+func (m *Manager) StartProcess(name string) error {
+	cmd := m.ctl("start", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start process %s: %w (output: %s)", name, err, string(output))
+	}
+
+	return nil
+}
+
+// StartProcesses starts multiple processes in parallel
+// This is much faster than calling StartProcess multiple times
+func (m *Manager) StartProcesses(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+
+	// Pass all program names to a single start command
+	// supervisord will start them in parallel
+	args := append([]string{"start"}, names...)
+	cmd := m.ctl(args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start processes: %w (output: %s)", err, string(output))
+	}
+
+	return nil
+}
+
+// StopProcess stops a specific process
+func (m *Manager) StopProcess(name string) error {
+	cmd := m.ctl("stop", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop process %s: %w (output: %s)", name, err, string(output))
+	}
+
+	return nil
+}
+
+// RestartProcess restarts a specific process
+func (m *Manager) RestartProcess(name string) error {
+	cmd := m.ctl("restart", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to restart process %s: %w (output: %s)", name, err, string(output))
+	}
+
+	return nil
+}
+
+// GetProcessStatus returns the status of a process
+func (m *Manager) GetProcessStatus(name string) (*ProcessStatus, error) {
+	cmd := m.ctl("status", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get status for %s: %w", name, err)
+	}
+
+	// Parse supervisord ctl status output
+	// Format: "progname  STATE  pid 12345, uptime 0:01:23"
+	// Note: May contain ANSI color codes
+	line := strings.TrimSpace(string(output))
+
+	// Remove ANSI color codes
+	line = strings.ReplaceAll(line, "\x1b[0;32m", "")
+	line = strings.ReplaceAll(line, "\x1b[0m", "")
+	line = strings.ReplaceAll(line, "[0;32m", "")
+	line = strings.ReplaceAll(line, "[0m", "")
+
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return nil, fmt.Errorf("unexpected status output format: %s", line)
+	}
+
+	status := &ProcessStatus{
+		Name:  fields[0],
+		State: fields[1],
+	}
+
+	// Extract PID if running - format: "pid 12345,"
+	for i, field := range fields {
+		if field == "pid" && i+1 < len(fields) {
+			pidStr := strings.TrimSuffix(fields[i+1], ",")
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				status.PID = pid
+			}
+			break
+		}
+	}
+
+	// Get description (rest of line after state)
+	if len(fields) > 2 {
+		status.Description = strings.Join(fields[2:], " ")
+	}
+
+	return status, nil
+}
+
+// GetAllProcesses returns status for all processes
+func (m *Manager) GetAllProcesses() ([]*ProcessStatus, error) {
+	cmd := m.ctl("status")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all process status: %w", err)
+	}
+
+	var statuses []*ProcessStatus
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Remove ANSI color codes
+		line = strings.ReplaceAll(line, "\x1b[0;32m", "")
+		line = strings.ReplaceAll(line, "\x1b[0m", "")
+		line = strings.ReplaceAll(line, "[0;32m", "")
+		line = strings.ReplaceAll(line, "[0m", "")
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		status := &ProcessStatus{
+			Name:  fields[0],
+			State: fields[1],
+		}
+
+		// Extract PID - format: "pid 12345,"
+		for i, field := range fields {
+			if field == "pid" && i+1 < len(fields) {
+				pidStr := strings.TrimSuffix(fields[i+1], ",")
+				if pid, err := strconv.Atoi(pidStr); err == nil {
+					status.PID = pid
+				}
+				break
+			}
+		}
+
+		// Get description
+		if len(fields) > 2 {
+			status.Description = strings.Join(fields[2:], " ")
+		}
+
+		statuses = append(statuses, status)
+	}
+
+	return statuses, nil
+}
+
+// StartGroup starts all processes in a group
+func (m *Manager) StartGroup(groupName string) error {
+	cmd := m.ctl("start", groupName+":*")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start group %s: %w (output: %s)", groupName, err, string(output))
+	}
+
+	return nil
+}
+
+// StopGroup stops all processes in a group
+func (m *Manager) StopGroup(groupName string) error {
+	cmd := m.ctl("stop", groupName+":*")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop group %s: %w (output: %s)", groupName, err, string(output))
+	}
+
+	return nil
+}
+
+// Reload reloads the supervisor configuration
+func (m *Manager) Reload() error {
+	cmd := m.ctl("reread")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to reread config: %w", err)
+	}
+
+	cmd = m.ctl("update")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to update config: %w", err)
+	}
+
+	return nil
+}

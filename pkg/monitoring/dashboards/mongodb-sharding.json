@@ -1,0 +1,445 @@
+{
+  "dashboard": {
+    "title": "MongoDB Sharding",
+    "tags": ["mongodb", "sharding", "mup"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "Operations Per Second by Shard",
+        "type": "timeseries",
+        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+        "id": 1,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\"}[5m])) by (replica_set)",
+            "legendFormat": "Shard: {{replica_set}} - Total Ops/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "axisLabel": "ops/sec",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "showPoints": "never"
+            },
+            "unit": "ops"
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": ["mean", "max", "last"],
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "desc"
+          }
+        }
+      },
+      {
+        "title": "Operation Types by Shard",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+        "id": 2,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\",type=\"query\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - Queries",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\",type=\"insert\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - Inserts",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\",type=\"update\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - Updates",
+            "refId": "C"
+          },
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\",type=\"delete\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - Deletes",
+            "refId": "D"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Write Operations Distribution Across Shards",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+        "id": 3,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",replica_set=~\"$shard\",type=~\"insert|update|delete\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 100},
+                {"color": "red", "value": 500}
+              ]
+            }
+          }
+        },
+        "options": {
+          "displayMode": "gradient",
+          "orientation": "horizontal",
+          "showUnfilled": true
+        }
+      },
+      {
+        "title": "Mongos Operations",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+        "id": 4,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$mongos_instance\"}[5m])) by (instance)",
+            "legendFormat": "{{instance}} - Total Ops",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Mongos Connections",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+        "id": 5,
+        "targets": [
+          {
+            "expr": "mongodb_ss_connections{instance=~\"$mongos_instance\",conn_type=\"current\"}",
+            "legendFormat": "{{instance}} - Current",
+            "refId": "A"
+          },
+          {
+            "expr": "mongodb_ss_connections{instance=~\"$mongos_instance\",conn_type=\"available\"}",
+            "legendFormat": "{{instance}} - Available",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Chunk Distribution per Shard",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 26},
+        "id": 6,
+        "targets": [
+          {
+            "expr": "mongodb_mongos_sharding_chunks_total{instance=~\"$mongos_instance\"} > 0",
+            "legendFormat": "{{shard}} - Chunks",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "blue", "value": null}
+              ]
+            }
+          }
+        },
+        "options": {
+          "textMode": "value_and_name",
+          "colorMode": "background",
+          "graphMode": "none"
+        }
+      },
+      {
+        "title": "Chunk Migrations",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 26},
+        "id": 7,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_metrics_commands_total{instance=~\"$instance\",command=\"moveChunk\"}[5m])",
+            "legendFormat": "{{instance}} - Chunk Migrations",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "title": "Shard Data Size",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+        "id": 8,
+        "targets": [
+          {
+            "expr": "sum(mongodb_ss_db_storage_size{instance=~\"$instance\"}) by (replica_set)",
+            "legendFormat": "{{replica_set}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "percentage",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "red", "value": 85}
+              ]
+            }
+          }
+        },
+        "options": {
+          "displayMode": "gradient",
+          "orientation": "horizontal"
+        }
+      },
+      {
+        "title": "Shard Document Count",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+        "id": 9,
+        "targets": [
+          {
+            "expr": "sum(mongodb_ss_db_objects{instance=~\"$instance\"}) by (replica_set)",
+            "legendFormat": "{{replica_set}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "continuous-GrYlRd"}
+          }
+        },
+        "options": {
+          "displayMode": "gradient",
+          "orientation": "horizontal"
+        }
+      },
+      {
+        "title": "Balancer Status",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 40},
+        "id": 10,
+        "targets": [
+          {
+            "expr": "mongodb_mongos_sharding_balancer_enabled{instance=~\"$mongos_instance\"}",
+            "legendFormat": "Balancer Enabled",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"type": "value", "value": "0", "text": "Disabled"},
+              {"type": "value", "value": "1", "text": "Enabled"}
+            ],
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Failed Chunk Operations",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 40},
+        "id": 11,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_mongod_metrics_commands_total{instance=~\"$instance\",command=\"moveChunk\",status=\"failed\"}[5m]))",
+            "legendFormat": "Failed Migrations/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.1},
+                {"color": "red", "value": 1}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Network Traffic by Shard",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 44},
+        "id": 12,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"rx\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - RX",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"tx\"}[5m])) by (replica_set)",
+            "legendFormat": "{{replica_set}} - TX",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps"
+          }
+        }
+      },
+      {
+        "title": "Query Targeting Efficiency",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 44},
+        "id": 13,
+        "targets": [
+          {
+            "expr": "sum(rate(mongodb_mongos_metrics_query_executor_scanned_total{instance=~\"$mongos_instance\"}[5m])) by (instance)",
+            "legendFormat": "{{instance}} - Scanned",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(mongodb_mongos_metrics_query_executor_scanned_objects_total{instance=~\"$mongos_instance\"}[5m])) by (instance)",
+            "legendFormat": "{{instance}} - Scanned Objects",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Connection Pool by Shard",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 52},
+        "id": 14,
+        "targets": [
+          {
+            "expr": "sum(mongodb_ss_connections{instance=~\"$instance\",conn_type=\"current\"}) by (replica_set)",
+            "legendFormat": "{{replica_set}} - Connections",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Shard Lock Wait Time",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 52},
+        "id": 15,
+        "targets": [
+          {
+            "expr": "rate(mongodb_mongod_locks_time_acquiring_global_microseconds_total{instance=~\"$instance\",type=\"ParallelBatchWriterMode\"}[5m])",
+            "legendFormat": "{{instance}} - Write Lock Wait",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "µs"
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "label": "Shard Instances",
+          "query": "label_values(mongodb_up{instance!~\".*:27017.*\"}, instance)",
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "multi": true,
+          "includeAll": true,
+          "refresh": 1
+        },
+        {
+          "name": "shard",
+          "type": "query",
+          "label": "Shard",
+          "query": "label_values(mongodb_op_counters_total{instance=~\"$instance\"}, replica_set)",
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "multi": true,
+          "includeAll": true,
+          "refresh": 1
+        },
+        {
+          "name": "mongos_instance",
+          "type": "query",
+          "label": "Mongos Instances",
+          "query": "label_values(mongodb_mongos_sharding_balancer_enabled, instance)",
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "multi": true,
+          "includeAll": true,
+          "refresh": 1
+        }
+      ]
+    }
+  }
+}
