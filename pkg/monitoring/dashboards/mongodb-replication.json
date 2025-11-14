@@ -1,459 +1,697 @@
 {
-  "dashboard": {
-    "title": "MongoDB Replication",
-    "tags": ["mongodb", "replication", "replica-set", "mup"],
-    "timezone": "browser",
-    "schemaVersion": 38,
-    "version": 1,
-    "refresh": "30s",
-    "time": {
-      "from": "now-1h",
-      "to": "now"
-    },
-    "panels": [
-      {
-        "title": "Replication Lag by Instance",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
-        "id": 1,
-        "targets": [
+  "title": "MongoDB Replication",
+  "tags": [
+    "mongodb",
+    "replication",
+    "replica-set",
+    "mup"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "Replication Lag by Instance",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_replication_lag{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}} ({{state}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "seconds",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "alert": {
+        "conditions": [
           {
-            "expr": "mongodb_mongod_replset_member_replication_lag{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}} ({{state}})",
-            "refId": "A"
+            "evaluator": {
+              "params": [
+                30
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A",
+                "5m",
+                "now"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "avg"
+            },
+            "type": "query"
           }
         ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "custom": {
-              "axisLabel": "seconds",
-              "fillOpacity": 10,
-              "lineWidth": 2
-            },
-            "unit": "s",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 10},
-                {"color": "orange", "value": 30},
-                {"color": "red", "value": 60}
-              ]
-            }
-          }
-        },
-        "options": {
-          "legend": {
-            "calcs": ["mean", "max", "last"],
-            "displayMode": "table",
-            "placement": "bottom"
-          }
-        },
-        "alert": {
-          "conditions": [
+        "message": "High replication lag detected"
+      }
+    },
+    {
+      "title": "Replica Set Member State",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_state{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
             {
-              "evaluator": {
-                "params": [30],
-                "type": "gt"
-              },
-              "operator": {"type": "and"},
-              "query": {"params": ["A", "5m", "now"]},
-              "reducer": {"params": [], "type": "avg"},
-              "type": "query"
+              "type": "value",
+              "value": "0",
+              "text": "STARTUP"
+            },
+            {
+              "type": "value",
+              "value": "1",
+              "text": "PRIMARY"
+            },
+            {
+              "type": "value",
+              "value": "2",
+              "text": "SECONDARY"
+            },
+            {
+              "type": "value",
+              "value": "3",
+              "text": "RECOVERING"
+            },
+            {
+              "type": "value",
+              "value": "5",
+              "text": "STARTUP2"
+            },
+            {
+              "type": "value",
+              "value": "6",
+              "text": "UNKNOWN"
+            },
+            {
+              "type": "value",
+              "value": "7",
+              "text": "ARBITER"
+            },
+            {
+              "type": "value",
+              "value": "8",
+              "text": "DOWN"
+            },
+            {
+              "type": "value",
+              "value": "9",
+              "text": "ROLLBACK"
+            },
+            {
+              "type": "value",
+              "value": "10",
+              "text": "REMOVED"
             }
           ],
-          "message": "High replication lag detected"
-        }
-      },
-      {
-        "title": "Replica Set Member State",
-        "type": "stat",
-        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 8},
-        "id": 2,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_member_state{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "mappings": [
-              {"type": "value", "value": "0", "text": "STARTUP"},
-              {"type": "value", "value": "1", "text": "PRIMARY"},
-              {"type": "value", "value": "2", "text": "SECONDARY"},
-              {"type": "value", "value": "3", "text": "RECOVERING"},
-              {"type": "value", "value": "5", "text": "STARTUP2"},
-              {"type": "value", "value": "6", "text": "UNKNOWN"},
-              {"type": "value", "value": "7", "text": "ARBITER"},
-              {"type": "value", "value": "8", "text": "DOWN"},
-              {"type": "value", "value": "9", "text": "ROLLBACK"},
-              {"type": "value", "value": "10", "text": "REMOVED"}
-            ],
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "green", "value": 1},
-                {"color": "green", "value": 2},
-                {"color": "yellow", "value": 3},
-                {"color": "blue", "value": 7}
-              ]
-            }
-          }
-        },
-        "options": {
-          "textMode": "value_and_name",
-          "colorMode": "background"
-        }
-      },
-      {
-        "title": "Replica Set Health",
-        "type": "stat",
-        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 8},
-        "id": 3,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_member_health{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "mappings": [
-              {"type": "value", "value": "0", "text": "Down"},
-              {"type": "value", "value": "1", "text": "Up"}
-            ],
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "green", "value": 1}
-              ]
-            }
-          }
-        },
-        "options": {
-          "textMode": "value_and_name",
-          "colorMode": "background"
-        }
-      },
-      {
-        "title": "Oplog Window",
-        "type": "gauge",
-        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 14},
-        "id": 4,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_oplog_head_timestamp{instance=~\"$instance\",replica_set=~\"$replica_set\"} - mongodb_mongod_replset_oplog_tail_timestamp{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s",
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "yellow", "value": 3600},
-                {"color": "green", "value": 7200}
-              ]
-            },
-            "min": 0
-          }
-        },
-        "options": {
-          "showThresholdLabels": true,
-          "showThresholdMarkers": true
-        }
-      },
-      {
-        "title": "Oplog Size",
-        "type": "gauge",
-        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 14},
-        "id": 5,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_oplog_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "bytes",
-            "color": {"mode": "palette-classic"}
-          }
-        }
-      },
-      {
-        "title": "Oplog GB/hour",
-        "type": "gauge",
-        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 14},
-        "id": 6,
-        "targets": [
-          {
-            "expr": "rate(mongodb_mongod_replset_oplog_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}[1h]) * 3600 / 1024 / 1024 / 1024",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "decgbytes",
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 5},
-                {"color": "red", "value": 10}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Replication Network Operations",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
-        "id": 7,
-        "targets": [
-          {
-            "expr": "rate(mongodb_mongod_replset_network_bytes_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
-            "legendFormat": "{{instance}} - Network Bytes",
-            "refId": "A"
+          "color": {
+            "mode": "thresholds"
           },
-          {
-            "expr": "rate(mongodb_mongod_replset_network_ops_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
-            "legendFormat": "{{instance}} - Network Ops",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short"
-          }
-        }
-      },
-      {
-        "title": "Replication Buffer Usage",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
-        "id": 8,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_buffer_count{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}} - Buffer Count",
-            "refId": "A"
-          },
-          {
-            "expr": "mongodb_mongod_replset_buffer_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}} - Buffer Size",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short"
-          }
-        }
-      },
-      {
-        "title": "Replication Operations Rate",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30},
-        "id": 9,
-        "targets": [
-          {
-            "expr": "rate(mongodb_mongod_replset_apply_batches_total_milliseconds{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
-            "legendFormat": "{{instance}} - Batch Apply Time",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(mongodb_mongod_replset_apply_ops_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
-            "legendFormat": "{{instance}} - Ops Applied",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "ops"
-          }
-        }
-      },
-      {
-        "title": "Elections and Failovers",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30},
-        "id": 10,
-        "targets": [
-          {
-            "expr": "increase(mongodb_mongod_replset_number_of_elections_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
-            "legendFormat": "{{instance}} - Elections",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short",
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 1},
-                {"color": "red", "value": 3}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Heartbeat Latency",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 38},
-        "id": 11,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_member_ping_milliseconds{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}} -> {{member}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "ms",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 50},
-                {"color": "red", "value": 100}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Vote Status",
-        "type": "stat",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 38},
-        "id": 12,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_member_votes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "mappings": [
-              {"type": "value", "value": "0", "text": "Non-voting"},
-              {"type": "value", "value": "1", "text": "Voting"}
-            ],
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "blue", "value": null},
-                {"color": "green", "value": 1}
-              ]
-            }
-          }
-        },
-        "options": {
-          "textMode": "value_and_name"
-        }
-      },
-      {
-        "title": "Sync Source",
-        "type": "table",
-        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 46},
-        "id": 13,
-        "targets": [
-          {
-            "expr": "mongodb_mongod_replset_member_state{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
-            "legendFormat": "",
-            "refId": "A",
-            "format": "table",
-            "instant": true
-          }
-        ],
-        "options": {
-          "showHeader": true,
-          "sortBy": [{"displayName": "replica_set", "desc": false}]
-        },
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "transformations": [
-          {
-            "id": "organize",
-            "options": {
-              "excludeByName": {
-                "Time": true,
-                "__name__": true,
-                "job": true
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
               },
-              "indexByName": {
-                "replica_set": 0,
-                "instance": 1,
-                "state": 2,
-                "Value": 3
+              {
+                "color": "green",
+                "value": 1
               },
-              "renameByName": {
-                "replica_set": "Replica Set",
-                "instance": "Instance",
-                "state": "State",
-                "Value": "State Code"
+              {
+                "color": "green",
+                "value": 2
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "blue",
+                "value": 7
               }
+            ]
+          }
+        }
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      }
+    },
+    {
+      "title": "Replica Set Health",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_health{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "value": "0",
+              "text": "Down"
+            },
+            {
+              "type": "value",
+              "value": "1",
+              "text": "Up"
             }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      }
+    },
+    {
+      "title": "Oplog Window",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_oplog_head_timestamp{instance=~\"$instance\",replica_set=~\"$replica_set\"} - mongodb_mongod_replset_oplog_tail_timestamp{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3600
+              },
+              {
+                "color": "green",
+                "value": 7200
+              }
+            ]
+          },
+          "min": 0
+        }
+      },
+      "options": {
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      }
+    },
+    {
+      "title": "Oplog Size",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_oplog_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "title": "Oplog GB/hour",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "rate(mongodb_mongod_replset_oplog_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}[1h]) * 3600 / 1024 / 1024 / 1024",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Replication Network Operations",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "rate(mongodb_mongod_replset_network_bytes_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
+          "legendFormat": "{{instance}} - Network Bytes",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(mongodb_mongod_replset_network_ops_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
+          "legendFormat": "{{instance}} - Network Ops",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Replication Buffer Usage",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_buffer_count{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}} - Buffer Count",
+          "refId": "A"
+        },
+        {
+          "expr": "mongodb_mongod_replset_buffer_size_bytes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}} - Buffer Size",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Replication Operations Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "rate(mongodb_mongod_replset_apply_batches_total_milliseconds{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
+          "legendFormat": "{{instance}} - Batch Apply Time",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(mongodb_mongod_replset_apply_ops_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
+          "legendFormat": "{{instance}} - Ops Applied",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Elections and Failovers",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "increase(mongodb_mongod_replset_number_of_elections_total{instance=~\"$instance\",replica_set=~\"$replica_set\"}[5m])",
+          "legendFormat": "{{instance}} - Elections",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Heartbeat Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_ping_milliseconds{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}} -> {{member}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Vote Status",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_votes{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "value": "0",
+              "text": "Non-voting"
+            },
+            {
+              "type": "value",
+              "value": "1",
+              "text": "Voting"
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "title": "Sync Source",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_state{instance=~\"$instance\",replica_set=~\"$replica_set\"}",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "replica_set",
+            "desc": false
           }
         ]
-      }
-    ],
-    "templating": {
-      "list": [
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "transformations": [
         {
-          "name": "replica_set",
-          "type": "query",
-          "label": "Replica Set",
-          "query": "label_values(mongodb_mongod_replset_member_state, replica_set)",
-          "current": {
-            "selected": true,
-            "text": "All",
-            "value": "$__all"
-          },
-          "multi": true,
-          "includeAll": true,
-          "refresh": 1
-        },
-        {
-          "name": "instance",
-          "type": "query",
-          "label": "Instance",
-          "query": "label_values(mongodb_mongod_replset_member_state{replica_set=~\"$replica_set\"}, instance)",
-          "current": {
-            "selected": true,
-            "text": "All",
-            "value": "$__all"
-          },
-          "multi": true,
-          "includeAll": true,
-          "refresh": 1
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true
+            },
+            "indexByName": {
+              "replica_set": 0,
+              "instance": 1,
+              "state": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "replica_set": "Replica Set",
+              "instance": "Instance",
+              "state": "State",
+              "Value": "State Code"
+            }
+          }
         }
       ]
     }
-  }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "replica_set",
+        "type": "query",
+        "label": "Replica Set",
+        "query": "label_values(mongodb_mongod_replset_member_state, replica_set)",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Instance",
+        "query": "label_values(mongodb_mongod_replset_member_state{replica_set=~\"$replica_set\"}, instance)",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1
+      }
+    ]
+  },
+  "uid": "mup-mongodb-replication"
 }

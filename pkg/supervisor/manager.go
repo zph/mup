@@ -199,6 +199,25 @@ func (m *Manager) StopProcess(name string) error {
 	return nil
 }
 
+// StopProcesses stops multiple processes in parallel
+// This is much faster than calling StopProcess multiple times
+func (m *Manager) StopProcesses(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+
+	// Pass all program names to a single stop command
+	// supervisord will stop them in parallel
+	args := append([]string{"stop"}, names...)
+	cmd := m.ctl(args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop processes: %w (output: %s)", err, string(output))
+	}
+
+	return nil
+}
+
 // RestartProcess restarts a specific process
 func (m *Manager) RestartProcess(name string) error {
 	cmd := m.ctl("restart", name)
@@ -336,14 +355,10 @@ func (m *Manager) StopGroup(groupName string) error {
 
 // Reload reloads the supervisor configuration
 func (m *Manager) Reload() error {
-	cmd := m.ctl("reread")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to reread config: %w", err)
-	}
-
-	cmd = m.ctl("update")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
+	cmd := m.ctl("reload")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w (output: %s)", err, string(output))
 	}
 
 	return nil

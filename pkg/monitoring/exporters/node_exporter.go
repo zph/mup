@@ -99,6 +99,12 @@ func (m *NodeExporterManager) IsRunning(pid int) (bool, error) {
 
 // GenerateSupervisorConfig generates supervisord config for node_exporter
 func (m *NodeExporterManager) GenerateSupervisorConfig(programName, host string, port int, binaryPath, logFile string) string {
+	// For local deployments, listen on 0.0.0.0 so Victoria Metrics in Docker can reach via host.docker.internal
+	listenAddr := "0.0.0.0"
+	if host != "localhost" && host != "127.0.0.1" {
+		listenAddr = host
+	}
+
 	return fmt.Sprintf(`[program:%s]
 command = %s --web.listen-address=%s:%d
 autostart = false
@@ -112,7 +118,7 @@ stopsignal = TERM
 `,
 		programName,
 		binaryPath,
-		host,
+		listenAddr,
 		port,
 		logFile,
 		logFile,

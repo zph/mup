@@ -7,14 +7,25 @@ import (
 	"testing"
 
 	"github.com/zph/mup/pkg/executor"
+	"github.com/zph/mup/pkg/supervisor"
 )
+
+// createTestSupervisorManager creates a supervisor manager for testing
+func createTestSupervisorManager(t *testing.T, dir string) *supervisor.Manager {
+	supMgr, err := supervisor.NewManager(dir, "test-cluster")
+	if err != nil {
+		t.Fatalf("failed to create supervisor manager: %v", err)
+	}
+	return supMgr
+}
 
 func TestNewManager(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, tmpDir)
+	mgr, err := NewManager(tmpDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -49,7 +60,8 @@ func TestGetURLs(t *testing.T) {
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, tmpDir)
+	mgr, err := NewManager(tmpDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -80,7 +92,8 @@ func TestGrafanaPasswordGeneration(t *testing.T) {
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, tmpDir)
+	mgr, err := NewManager(tmpDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -114,7 +127,8 @@ func TestHealthCheck(t *testing.T) {
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, tmpDir)
+	mgr, err := NewManager(tmpDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -136,23 +150,28 @@ func TestHealthCheck(t *testing.T) {
 }
 
 func TestGenerateSupervisorConfig(t *testing.T) {
-	tmpDir := t.TempDir()
+	// Create cluster directory structure
+	clusterDir := t.TempDir()
+	monitoringDir := filepath.Join(clusterDir, "monitoring")
+	os.MkdirAll(monitoringDir, 0755)
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, clusterDir)
+	mgr, err := NewManager(monitoringDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	if err := mgr.generateSupervisorConfig(); err != nil {
-		t.Fatalf("failed to generate supervisor config: %v", err)
+	// Add monitoring to supervisor (without exporters for basic test)
+	if err := mgr.addMonitoringToSupervisor(nil); err != nil {
+		t.Fatalf("failed to add monitoring to supervisor: %v", err)
 	}
 
-	// Verify config file created
-	configPath := filepath.Join(tmpDir, "supervisor.ini")
+	// Verify monitoring config file created in cluster directory (parent of monitoringDir)
+	configPath := filepath.Join(clusterDir, "monitoring-supervisor.ini")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		t.Error("supervisor config file not created")
+		t.Error("monitoring supervisor config file not created")
 	}
 
 	// Read and verify config contains expected sections
@@ -163,10 +182,8 @@ func TestGenerateSupervisorConfig(t *testing.T) {
 
 	configStr := string(data)
 
-	// Check for required sections
+	// Check for required sections (no [supervisord] section, just programs and group)
 	requiredSections := []string{
-		"[supervisord]",
-		"[inet_http_server]",
 		"[program:monitoring-victoria-metrics]",
 		"[program:monitoring-grafana]",
 		"[group:monitoring]",
@@ -184,7 +201,8 @@ func TestCreateGrafanaProvisioning(t *testing.T) {
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()
-	mgr, err := NewManager(tmpDir, config, exec)
+	supMgr := createTestSupervisorManager(t, tmpDir)
+	mgr, err := NewManager(tmpDir, config, exec, supMgr)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}

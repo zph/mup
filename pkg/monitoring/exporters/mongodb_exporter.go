@@ -114,9 +114,15 @@ func (m *MongoDBExporterManager) IsRunning(pid int) (bool, error) {
 
 // GenerateSupervisorConfig generates supervisord config for mongodb_exporter
 func (m *MongoDBExporterManager) GenerateSupervisorConfig(programName, host string, exporterPort, mongoDBPort int, binaryPath, logFile string) string {
+	// For local deployments, listen on 0.0.0.0 so Victoria Metrics in Docker can reach via host.docker.internal
+	listenAddr := "0.0.0.0"
+	if host != "localhost" && host != "127.0.0.1" {
+		listenAddr = host
+	}
+
 	args := []string{
 		fmt.Sprintf("--mongodb.uri=mongodb://%s:%d", host, mongoDBPort),
-		fmt.Sprintf("--web.listen-address=%s:%d", host, exporterPort),
+		fmt.Sprintf("--web.listen-address=%s:%d", listenAddr, exporterPort),
 	}
 	args = append(args, m.extraArgs...)
 

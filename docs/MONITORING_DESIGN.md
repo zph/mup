@@ -1,5 +1,7 @@
 # Monitoring and Metrics Design for Mup
 
+> **Note**: This design document describes the original monitoring architecture. The implementation has evolved to use a **single supervisord instance per cluster** where monitoring lives within each cluster directory (`~/.mup/storage/clusters/<name>/monitoring/`) rather than a global monitoring directory. See the "Architecture Evolution" section below for details.
+
 ## Overview
 
 This document outlines the design for comprehensive monitoring and metrics collection for MongoDB clusters managed by Mup. The solution uses Victoria Metrics (a Prometheus-compatible time-series database), appropriate exporters, and pre-configured Grafana dashboards for visualization.
@@ -12,6 +14,24 @@ This document outlines the design for comprehensive monitoring and metrics colle
 4. **Pre-built dashboards**: Include production-ready Grafana dashboards that auto-load
 5. **Resource efficiency**: Minimal overhead on monitored systems
 6. **Version compatibility**: Support MongoDB 3.6-8.0 metrics collection
+
+### Architecture Evolution
+
+**Original Design**: Global monitoring directory at `~/.mup/monitoring/` with separate supervisord instance.
+
+**Current Implementation**: Cluster-specific monitoring with unified supervisord:
+- Monitoring lives in `~/.mup/storage/clusters/<name>/monitoring/`
+- Single supervisord instance per cluster manages both MongoDB and monitoring processes
+- Monitoring configuration in `monitoring-supervisor.ini` alongside main `supervisor.ini`
+- Monitoring processes organized as supervisord group: `[group:monitoring]`
+- Lifecycle commands (`mup cluster start/stop`) automatically manage monitoring
+
+**Benefits**:
+- Simplified architecture: one supervisor per cluster instead of N+1 supervisors
+- Automatic lifecycle management: monitoring starts/stops with cluster
+- Per-cluster isolation: each cluster has its own monitoring stack
+- Cleaner directory structure: all cluster resources in one location
+- Easier cleanup: `mup cluster destroy` removes all monitoring data
 
 ---
 

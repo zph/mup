@@ -83,6 +83,11 @@ func (g *ConfigGenerator) GenerateUnifiedConfig() error {
 		}
 	}
 
+	// Add include section for monitoring configuration
+	// This allows monitoring to be added later without regenerating the main config
+	fmt.Fprintf(file, "\n[include]\n")
+	fmt.Fprintf(file, "files = monitoring-supervisor.ini\n")
+
 	return nil
 }
 

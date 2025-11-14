@@ -1,581 +1,789 @@
 {
-  "dashboard": {
-    "title": "System Overview",
-    "tags": ["system", "node-exporter", "hardware", "mup"],
-    "timezone": "browser",
-    "schemaVersion": 38,
-    "version": 1,
-    "refresh": "30s",
-    "time": {
-      "from": "now-1h",
-      "to": "now"
-    },
-    "panels": [
-      {
-        "title": "Cluster-Wide CPU Usage",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
-        "id": 1,
-        "targets": [
-          {
-            "expr": "avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$instance\"}[5m])) * 100))",
-            "legendFormat": "Cluster Average CPU %",
-            "refId": "A"
-          },
-          {
-            "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$instance\"}[5m])) * 100)",
-            "legendFormat": "{{instance}} CPU %",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "custom": {
-              "axisLabel": "CPU %",
-              "fillOpacity": 10,
-              "lineWidth": 2
-            },
-            "unit": "percent",
-            "max": 100,
-            "min": 0,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 70},
-                {"color": "orange", "value": 85},
-                {"color": "red", "value": 95}
-              ]
-            }
-          },
-          "overrides": [
-            {
-              "matcher": {"id": "byName", "options": "Cluster Average CPU %"},
-              "properties": [
-                {
-                  "id": "custom.lineWidth",
-                  "value": 3
-                },
-                {
-                  "id": "color",
-                  "value": {"mode": "fixed", "fixedColor": "blue"}
-                }
-              ]
-            }
-          ]
-        },
-        "options": {
-          "legend": {
-            "calcs": ["mean", "max", "last"],
-            "displayMode": "table",
-            "placement": "bottom"
-          }
-        }
+  "title": "System Overview",
+  "tags": [
+    "system",
+    "node-exporter",
+    "hardware",
+    "mup"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "Cluster-Wide CPU Usage",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
       },
-      {
-        "title": "CPU Usage by Core (Stacked)",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-        "id": 2,
-        "targets": [
-          {
-            "expr": "sum by (instance, mode) (rate(node_cpu_seconds_total{instance=~\"$instance\",mode!=\"idle\"}[5m])) * 100",
-            "legendFormat": "{{instance}} - {{mode}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "percent",
-            "custom": {
-              "fillOpacity": 70,
-              "lineWidth": 0,
-              "stacking": {"mode": "normal"}
-            }
-          }
-        }
-      },
-      {
-        "title": "Load Average",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-        "id": 3,
-        "targets": [
-          {
-            "expr": "node_load1{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - 1m",
-            "refId": "A"
-          },
-          {
-            "expr": "node_load5{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - 5m",
-            "refId": "B"
-          },
-          {
-            "expr": "node_load15{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - 15m",
-            "refId": "C"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short"
-          }
-        }
-      },
-      {
-        "title": "Disk I/O Latency (Microspikes Detection)",
-        "type": "timeseries",
-        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
-        "id": 4,
-        "targets": [
-          {
-            "expr": "rate(node_disk_read_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) / rate(node_disk_reads_completed_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) * 1000",
-            "legendFormat": "{{instance}} - {{device}} Read Latency (ms)",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(node_disk_write_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) / rate(node_disk_writes_completed_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) * 1000",
-            "legendFormat": "{{instance}} - {{device}} Write Latency (ms)",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "custom": {
-              "axisLabel": "latency (ms)",
-              "fillOpacity": 20,
-              "lineWidth": 1,
-              "pointSize": 3,
-              "showPoints": "auto"
-            },
-            "unit": "ms",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 10},
-                {"color": "orange", "value": 50},
-                {"color": "red", "value": 100}
-              ]
-            }
-          }
+      "id": 1,
+      "targets": [
+        {
+          "expr": "avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$instance\"}[5m])) * 100))",
+          "legendFormat": "Cluster Average CPU %",
+          "refId": "A"
         },
-        "options": {
-          "legend": {
-            "calcs": ["mean", "max", "lastNotNull"],
-            "displayMode": "table",
-            "placement": "bottom"
+        {
+          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$instance\"}[5m])) * 100)",
+          "legendFormat": "{{instance}} CPU %",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "tooltip": {
-            "mode": "multi",
-            "sort": "desc"
-          }
-        },
-        "alert": {
-          "conditions": [
-            {
-              "evaluator": {
-                "params": [50],
-                "type": "gt"
+          "custom": {
+            "axisLabel": "CPU %",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
               },
-              "operator": {"type": "and"},
-              "query": {"params": ["A", "5m", "now"]},
-              "reducer": {"params": [], "type": "max"},
-              "type": "query"
-            }
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cluster Average CPU %"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
           ],
-          "message": "Disk latency spike detected"
+          "displayMode": "table",
+          "placement": "bottom"
         }
+      }
+    },
+    {
+      "title": "CPU Usage by Core (Stacked)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
       },
-      {
-        "title": "Disk Latency 99th Percentile (Spike Detection)",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
-        "id": 5,
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.99, sum(rate(node_disk_io_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m])) by (instance, device, le)) * 1000",
-            "legendFormat": "{{instance}} - {{device}} p99",
-            "refId": "A"
-          },
-          {
-            "expr": "histogram_quantile(0.95, sum(rate(node_disk_io_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m])) by (instance, device, le)) * 1000",
-            "legendFormat": "{{instance}} - {{device}} p95",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "ms",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 20},
-                {"color": "red", "value": 100}
-              ]
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum by (instance, mode) (rate(node_cpu_seconds_total{instance=~\"$instance\",mode!=\"idle\"}[5m])) * 100",
+          "legendFormat": "{{instance}} - {{mode}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal"
             }
-          }
-        }
-      },
-      {
-        "title": "Disk I/O Operations",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
-        "id": 6,
-        "targets": [
-          {
-            "expr": "rate(node_disk_reads_completed_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} Reads",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(node_disk_writes_completed_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} Writes",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "iops"
-          }
-        }
-      },
-      {
-        "title": "Disk Throughput",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
-        "id": 7,
-        "targets": [
-          {
-            "expr": "rate(node_disk_read_bytes_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} Read",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(node_disk_written_bytes_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} Write",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "Bps"
-          }
-        }
-      },
-      {
-        "title": "Disk Queue Depth",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
-        "id": 8,
-        "targets": [
-          {
-            "expr": "rate(node_disk_io_time_weighted_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 10},
-                {"color": "red", "value": 20}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Memory Usage",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 42},
-        "id": 9,
-        "targets": [
-          {
-            "expr": "(node_memory_MemTotal_bytes{instance=~\"$instance\"} - node_memory_MemAvailable_bytes{instance=~\"$instance\"}) / node_memory_MemTotal_bytes{instance=~\"$instance\"} * 100",
-            "legendFormat": "{{instance}} - Used %",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "percent",
-            "max": 100,
-            "min": 0,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 70},
-                {"color": "orange", "value": 85},
-                {"color": "red", "value": 95}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Memory Breakdown",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 42},
-        "id": 10,
-        "targets": [
-          {
-            "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Total",
-            "refId": "A"
-          },
-          {
-            "expr": "node_memory_MemAvailable_bytes{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Available",
-            "refId": "B"
-          },
-          {
-            "expr": "node_memory_Buffers_bytes{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Buffers",
-            "refId": "C"
-          },
-          {
-            "expr": "node_memory_Cached_bytes{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Cached",
-            "refId": "D"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "bytes"
-          }
-        }
-      },
-      {
-        "title": "Network Traffic",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 50},
-        "id": 11,
-        "targets": [
-          {
-            "expr": "rate(node_network_receive_bytes_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} RX",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(node_network_transmit_bytes_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} TX",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "Bps"
-          }
-        }
-      },
-      {
-        "title": "Network Errors and Drops",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 50},
-        "id": 12,
-        "targets": [
-          {
-            "expr": "rate(node_network_receive_errs_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} RX Errors",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(node_network_transmit_errs_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} TX Errors",
-            "refId": "B"
-          },
-          {
-            "expr": "rate(node_network_receive_drop_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} RX Drops",
-            "refId": "C"
-          },
-          {
-            "expr": "rate(node_network_transmit_drop_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
-            "legendFormat": "{{instance}} - {{device}} TX Drops",
-            "refId": "D"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "pps"
-          }
-        }
-      },
-      {
-        "title": "Filesystem Usage",
-        "type": "bargauge",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 58},
-        "id": 13,
-        "targets": [
-          {
-            "expr": "(node_filesystem_size_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} - node_filesystem_avail_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"}) / node_filesystem_size_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} * 100",
-            "legendFormat": "{{instance}} - {{mountpoint}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "percent",
-            "max": 100,
-            "min": 0,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 70},
-                {"color": "orange", "value": 85},
-                {"color": "red", "value": 95}
-              ]
-            }
-          }
-        },
-        "options": {
-          "displayMode": "gradient",
-          "orientation": "horizontal"
-        }
-      },
-      {
-        "title": "Filesystem Inodes Usage",
-        "type": "bargauge",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 58},
-        "id": 14,
-        "targets": [
-          {
-            "expr": "(node_filesystem_files{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} - node_filesystem_files_free{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"}) / node_filesystem_files{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} * 100",
-            "legendFormat": "{{instance}} - {{mountpoint}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "percent",
-            "max": 100,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 70},
-                {"color": "red", "value": 90}
-              ]
-            }
-          }
-        },
-        "options": {
-          "displayMode": "gradient",
-          "orientation": "horizontal"
-        }
-      },
-      {
-        "title": "System Uptime",
-        "type": "stat",
-        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 66},
-        "id": 15,
-        "targets": [
-          {
-            "expr": "node_time_seconds{instance=~\"$instance\"} - node_boot_time_seconds{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s",
-            "color": {"mode": "value"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "yellow", "value": 3600},
-                {"color": "green", "value": 86400}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Context Switches",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 6, "y": 66},
-        "id": 16,
-        "targets": [
-          {
-            "expr": "rate(node_context_switches_total{instance=~\"$instance\"}[5m])",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "ops"
-          }
-        }
-      },
-      {
-        "title": "Open File Descriptors",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 66},
-        "id": 17,
-        "targets": [
-          {
-            "expr": "node_filefd_allocated{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Used",
-            "refId": "A"
-          },
-          {
-            "expr": "node_filefd_maximum{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - Max",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short"
           }
         }
       }
-    ],
-    "templating": {
-      "list": [
+    },
+    {
+      "title": "Load Average",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
         {
-          "name": "instance",
-          "type": "query",
-          "label": "Host",
-          "query": "label_values(node_uname_info, instance)",
-          "current": {
-            "selected": true,
-            "text": "All",
-            "value": "$__all"
-          },
-          "multi": true,
-          "includeAll": true,
-          "refresh": 1
+          "expr": "node_load1{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - 1m",
+          "refId": "A"
         },
         {
-          "name": "disk",
-          "type": "query",
-          "label": "Disk",
-          "query": "label_values(node_disk_io_time_seconds_total{instance=~\"$instance\"}, device)",
-          "current": {
-            "selected": true,
-            "text": "All",
-            "value": "$__all"
-          },
-          "multi": true,
-          "includeAll": true,
-          "refresh": 1,
-          "regex": "/^(?!dm-|loop).+$/"
+          "expr": "node_load5{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - 5m",
+          "refId": "B"
+        },
+        {
+          "expr": "node_load15{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - 15m",
+          "refId": "C"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Disk I/O Latency (Microspikes Detection)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) / rate(node_disk_reads_completed_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) * 1000",
+          "legendFormat": "{{instance}} - {{device}} Read Latency (ms)",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_disk_write_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) / rate(node_disk_writes_completed_total{instance=~\"$instance\",device=~\"$disk\"}[1m]) * 1000",
+          "legendFormat": "{{instance}} - {{device}} Write Latency (ms)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "latency (ms)",
+            "fillOpacity": 20,
+            "lineWidth": 1,
+            "pointSize": 3,
+            "showPoints": "auto"
+          },
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                50
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A",
+                "5m",
+                "now"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "max"
+            },
+            "type": "query"
+          }
+        ],
+        "message": "Disk latency spike detected"
+      }
+    },
+    {
+      "title": "Disk Latency 99th Percentile (Spike Detection)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(node_disk_io_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m])) by (instance, device, le)) * 1000",
+          "legendFormat": "{{instance}} - {{device}} p99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(node_disk_io_time_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[1m])) by (instance, device, le)) * 1000",
+          "legendFormat": "{{instance}} - {{device}} p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Disk I/O Operations",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "rate(node_disk_reads_completed_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} Reads",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_disk_writes_completed_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} Writes",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops"
+        }
+      }
+    },
+    {
+      "title": "Disk Throughput",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_bytes_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} Read",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_disk_written_bytes_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} Write",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
+    },
+    {
+      "title": "Disk Queue Depth",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "rate(node_disk_io_time_weighted_seconds_total{instance=~\"$instance\",device=~\"$disk\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "(node_memory_MemTotal_bytes{instance=~\"$instance\"} - node_memory_MemAvailable_bytes{instance=~\"$instance\"}) / node_memory_MemTotal_bytes{instance=~\"$instance\"} * 100",
+          "legendFormat": "{{instance}} - Used %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Memory Breakdown",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Total",
+          "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemAvailable_bytes{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Available",
+          "refId": "B"
+        },
+        {
+          "expr": "node_memory_Buffers_bytes{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Buffers",
+          "refId": "C"
+        },
+        {
+          "expr": "node_memory_Cached_bytes{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Cached",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "title": "Network Traffic",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_bytes_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} RX",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_network_transmit_bytes_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} TX",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
+    },
+    {
+      "title": "Network Errors and Drops",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_errs_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} RX Errors",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_network_transmit_errs_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} TX Errors",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(node_network_receive_drop_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} RX Drops",
+          "refId": "C"
+        },
+        {
+          "expr": "rate(node_network_transmit_drop_total{instance=~\"$instance\",device!~\"lo|docker.*|veth.*\"}[5m])",
+          "legendFormat": "{{instance}} - {{device}} TX Drops",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "pps"
+        }
+      }
+    },
+    {
+      "title": "Filesystem Usage",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "(node_filesystem_size_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} - node_filesystem_avail_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"}) / node_filesystem_size_bytes{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} * 100",
+          "legendFormat": "{{instance}} - {{mountpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "title": "Filesystem Inodes Usage",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "id": 14,
+      "targets": [
+        {
+          "expr": "(node_filesystem_files{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} - node_filesystem_files_free{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"}) / node_filesystem_files{instance=~\"$instance\",fstype!~\"tmpfs|devtmpfs|overlay\"} * 100",
+          "legendFormat": "{{instance}} - {{mountpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "title": "System Uptime",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 66
+      },
+      "id": 15,
+      "targets": [
+        {
+          "expr": "node_time_seconds{instance=~\"$instance\"} - node_boot_time_seconds{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "value"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3600
+              },
+              {
+                "color": "green",
+                "value": 86400
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Context Switches",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 6,
+        "y": 66
+      },
+      "id": 16,
+      "targets": [
+        {
+          "expr": "rate(node_context_switches_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Open File Descriptors",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 66
+      },
+      "id": 17,
+      "targets": [
+        {
+          "expr": "node_filefd_allocated{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Used",
+          "refId": "A"
+        },
+        {
+          "expr": "node_filefd_maximum{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - Max",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
     }
-  }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Host",
+        "query": "label_values(node_uname_info, instance)",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1
+      },
+      {
+        "name": "disk",
+        "type": "query",
+        "label": "Disk",
+        "query": "label_values(node_disk_io_time_seconds_total{instance=~\"$instance\"}, device)",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "regex": "/^(?!dm-|loop).+$/"
+      }
+    ]
+  },
+  "uid": "mup-system-overview"
 }

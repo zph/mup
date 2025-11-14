@@ -103,8 +103,10 @@ func (gm *GrafanaManager) EnsureImage(ctx context.Context) error {
 
 // GenerateSupervisorConfig generates supervisord configuration for Grafana
 func (gm *GrafanaManager) GenerateSupervisorConfig() string {
+	// Use detected container runtime (docker or podman)
+	runtime := gm.dockerClient.GetRuntime()
 	return fmt.Sprintf(`[program:%s]
-command = docker run --rm \
+command = %s run --rm \
   --name %s \
   -p 127.0.0.1:%d:3000 \
   -v %s:/var/lib/grafana \
@@ -122,6 +124,7 @@ stopwaitsecs = 30
 stopsignal = TERM
 `,
 		GrafanaProgramName,
+		runtime,
 		GrafanaContainerName,
 		gm.port,
 		gm.dataDir,

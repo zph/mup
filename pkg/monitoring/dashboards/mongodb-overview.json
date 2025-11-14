@@ -1,339 +1,446 @@
 {
-  "dashboard": {
-    "title": "MongoDB Overview",
-    "tags": ["mongodb", "mup"],
-    "timezone": "browser",
-    "schemaVersion": 38,
-    "version": 1,
-    "refresh": "30s",
-    "time": {
-      "from": "now-1h",
-      "to": "now"
-    },
-    "panels": [
-      {
-        "title": "Operations Per Second by Instance",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
-        "id": 1,
-        "targets": [
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\"}[5m])) by (instance)",
-            "legendFormat": "{{instance}} - Total Ops/sec",
-            "refId": "A"
-          },
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"query\"}[5m])) by (instance)",
-            "legendFormat": "{{instance}} - Queries/sec",
-            "refId": "B"
-          },
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"insert\"}[5m])) by (instance)",
-            "legendFormat": "{{instance}} - Inserts/sec",
-            "refId": "C"
-          },
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"update\"}[5m])) by (instance)",
-            "legendFormat": "{{instance}} - Updates/sec",
-            "refId": "D"
-          },
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"delete\"}[5m])) by (instance)",
-            "legendFormat": "{{instance}} - Deletes/sec",
-            "refId": "E"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "custom": {
-              "axisLabel": "ops/sec",
-              "axisPlacement": "auto",
-              "fillOpacity": 10,
-              "gradientMode": "none",
-              "lineInterpolation": "linear",
-              "lineWidth": 2,
-              "pointSize": 5,
-              "showPoints": "never",
-              "spanNulls": true
-            },
-            "unit": "ops"
-          }
+  "title": "MongoDB Overview",
+  "tags": [
+    "mongodb",
+    "mup"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "Operations Per Second by Instance",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\"}[5m])) by (instance)",
+          "legendFormat": "{{instance}} - Total Ops/sec",
+          "refId": "A"
         },
-        "options": {
-          "legend": {
-            "calcs": ["mean", "max", "last"],
-            "displayMode": "table",
-            "placement": "bottom",
-            "showLegend": true
-          },
-          "tooltip": {
-            "mode": "multi",
-            "sort": "desc"
-          }
-        }
-      },
-      {
-        "title": "Operation Types Distribution",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-        "id": 2,
-        "targets": [
-          {
-            "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\"}[5m])) by (type)",
-            "legendFormat": "{{type}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "custom": {
-              "fillOpacity": 70,
-              "lineWidth": 0,
-              "stacking": {"mode": "normal"}
-            },
-            "unit": "ops"
-          }
+        {
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"query\"}[5m])) by (instance)",
+          "legendFormat": "{{instance}} - Queries/sec",
+          "refId": "B"
         },
-        "options": {
-          "legend": {
-            "calcs": ["mean", "max"],
-            "displayMode": "table",
-            "placement": "right"
-          }
+        {
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"insert\"}[5m])) by (instance)",
+          "legendFormat": "{{instance}} - Inserts/sec",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"update\"}[5m])) by (instance)",
+          "legendFormat": "{{instance}} - Updates/sec",
+          "refId": "D"
+        },
+        {
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\",type=\"delete\"}[5m])) by (instance)",
+          "legendFormat": "{{instance}} - Deletes/sec",
+          "refId": "E"
         }
-      },
-      {
-        "title": "Connections",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-        "id": 3,
-        "targets": [
-          {
-            "expr": "mongodb_ss_connections{instance=~\"$instance\",conn_type=\"current\"}",
-            "legendFormat": "{{instance}} - Current",
-            "refId": "A"
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          {
-            "expr": "mongodb_ss_connections{instance=~\"$instance\",conn_type=\"available\"}",
-            "legendFormat": "{{instance}} - Available",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "palette-classic"},
-            "unit": "short"
-          }
-        }
-      },
-      {
-        "title": "Query Executor Metrics",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-        "id": 4,
-        "targets": [
-          {
-            "expr": "rate(mongodb_mongod_metrics_query_executor_total{instance=~\"$instance\",state=\"scanned\"}[5m])",
-            "legendFormat": "{{instance}} - Scanned",
-            "refId": "A"
+          "custom": {
+            "axisLabel": "ops/sec",
+            "axisPlacement": "auto",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true
           },
-          {
-            "expr": "rate(mongodb_mongod_metrics_query_executor_total{instance=~\"$instance\",state=\"scanned_objects\"}[5m])",
-            "legendFormat": "{{instance}} - Scanned Objects",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short"
-          }
+          "unit": "ops"
         }
       },
-      {
-        "title": "Document Operations",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-        "id": 5,
-        "targets": [
-          {
-            "expr": "rate(mongodb_mongod_metrics_document_total{instance=~\"$instance\"}[5m])",
-            "legendFormat": "{{instance}} - {{state}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "ops"
-          }
-        }
-      },
-      {
-        "title": "Network Traffic",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-        "id": 6,
-        "targets": [
-          {
-            "expr": "rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"rx\"}[5m])",
-            "legendFormat": "{{instance}} - Received",
-            "refId": "A"
-          },
-          {
-            "expr": "rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"tx\"}[5m])",
-            "legendFormat": "{{instance}} - Transmitted",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "Bps"
-          }
-        }
-      },
-      {
-        "title": "Memory Usage",
-        "type": "timeseries",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
-        "id": 7,
-        "targets": [
-          {
-            "expr": "mongodb_ss_mem_resident{instance=~\"$instance\"} * 1024 * 1024",
-            "legendFormat": "{{instance}} - Resident",
-            "refId": "A"
-          },
-          {
-            "expr": "mongodb_ss_mem_virtual{instance=~\"$instance\"} * 1024 * 1024",
-            "legendFormat": "{{instance}} - Virtual",
-            "refId": "B"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "bytes"
-          }
-        }
-      },
-      {
-        "title": "Current Queue Sizes",
-        "type": "stat",
-        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 32},
-        "id": 8,
-        "targets": [
-          {
-            "expr": "mongodb_ss_globalLock_currentQueue{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - {{count_type}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 10},
-                {"color": "red", "value": 50}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Active Clients",
-        "type": "stat",
-        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 32},
-        "id": 9,
-        "targets": [
-          {
-            "expr": "mongodb_ss_globalLock_activeClients{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}} - {{count_type}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "thresholds"},
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "yellow", "value": 100},
-                {"color": "red", "value": 500}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "Uptime",
-        "type": "stat",
-        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 32},
-        "id": 10,
-        "targets": [
-          {
-            "expr": "mongodb_ss_uptime{instance=~\"$instance\"}",
-            "legendFormat": "{{instance}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s",
-            "color": {"mode": "value"},
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "yellow", "value": 300},
-                {"color": "green", "value": 3600}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "MongoDB Version",
-        "type": "stat",
-        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 32},
-        "id": 11,
-        "targets": [
-          {
-            "expr": "mongodb_version_info{instance=~\"$instance\"}",
-            "legendFormat": "{{mongodb}}",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "fields": "/^mongodb$/",
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "name"
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       }
-    ],
-    "templating": {
-      "list": [
+    },
+    {
+      "title": "Operation Types Distribution",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "targets": [
         {
-          "name": "instance",
-          "type": "query",
-          "query": "label_values(mongodb_up, instance)",
-          "current": {
-            "selected": true,
-            "text": "All",
-            "value": "$__all"
-          },
-          "multi": true,
-          "includeAll": true,
-          "refresh": 1,
-          "regex": ""
+          "expr": "sum(rate(mongodb_op_counters_total{instance=~\"$instance\"}[5m])) by (type)",
+          "legendFormat": "{{type}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "ops"
+        }
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        }
+      }
+    },
+    {
+      "title": "Connections",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "mongodb_ss_connections{instance=~\"$instance\",conn_type=\"current\"}",
+          "legendFormat": "{{instance}} - Current",
+          "refId": "A"
+        },
+        {
+          "expr": "mongodb_ss_connections{instance=~\"$instance\",conn_type=\"available\"}",
+          "legendFormat": "{{instance}} - Available",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Query Executor Metrics",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "rate(mongodb_mongod_metrics_query_executor_total{instance=~\"$instance\",state=\"scanned\"}[5m])",
+          "legendFormat": "{{instance}} - Scanned",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(mongodb_mongod_metrics_query_executor_total{instance=~\"$instance\",state=\"scanned_objects\"}[5m])",
+          "legendFormat": "{{instance}} - Scanned Objects",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Document Operations",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "rate(mongodb_mongod_metrics_document_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} - {{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Network Traffic",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"rx\"}[5m])",
+          "legendFormat": "{{instance}} - Received",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(mongodb_network_bytes_total{instance=~\"$instance\",state=\"tx\"}[5m])",
+          "legendFormat": "{{instance}} - Transmitted",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "mongodb_ss_mem_resident{instance=~\"$instance\"} * 1024 * 1024",
+          "legendFormat": "{{instance}} - Resident",
+          "refId": "A"
+        },
+        {
+          "expr": "mongodb_ss_mem_virtual{instance=~\"$instance\"} * 1024 * 1024",
+          "legendFormat": "{{instance}} - Virtual",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "title": "Current Queue Sizes",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 32
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "mongodb_ss_globalLock_currentQueue{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - {{count_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Active Clients",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 32
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "mongodb_ss_globalLock_activeClients{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} - {{count_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 32
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "mongodb_ss_uptime{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "value"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 300
+              },
+              {
+                "color": "green",
+                "value": 3600
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "MongoDB Version",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 32
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "mongodb_version_info{instance=~\"$instance\"}",
+          "legendFormat": "{{mongodb}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "fields": "/^mongodb$/",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "name"
+      }
     }
-  }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "query": "label_values(mongodb_up, instance)",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "regex": ""
+      }
+    ]
+  },
+  "uid": "mup-mongodb-overview"
 }

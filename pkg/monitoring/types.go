@@ -117,8 +117,8 @@ func DefaultConfig() *Config {
 				Version:  "0.40.0",
 				PortBase: 9216,
 				ExtraArgs: []string{
-					"--collect.diagnosticdata",
-					"--collect.replicasetstatus",
+					"--collector.diagnosticdata",
+					"--collector.replicasetstatus",
 				},
 			},
 		},

@@ -14,20 +14,36 @@ const (
 	GrafanaTag           = "latest"
 )
 
-// Client provides Docker operations
-type Client struct{}
-
-// NewClient creates a new Docker client
-func NewClient() *Client {
-	return &Client{}
+// Client provides container runtime operations (Docker or Podman)
+type Client struct {
+	runtime string // "docker" or "podman"
 }
 
-// CheckDockerInstalled verifies Docker is installed and accessible
+// NewClient creates a new container runtime client
+// Auto-detects Docker or Podman availability
+func NewClient() *Client {
+	// Try docker first
+	cmd := exec.Command("docker", "version")
+	if err := cmd.Run(); err == nil {
+		return &Client{runtime: "docker"}
+	}
+
+	// Try podman
+	cmd = exec.Command("podman", "version")
+	if err := cmd.Run(); err == nil {
+		return &Client{runtime: "podman"}
+	}
+
+	// Default to docker (will fail with helpful error later)
+	return &Client{runtime: "docker"}
+}
+
+// CheckDockerInstalled verifies container runtime is installed and accessible
 func (c *Client) CheckDockerInstalled(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "docker", "version")
+	cmd := exec.CommandContext(ctx, c.runtime, "version")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker not installed or not accessible: %w\nOutput: %s", err, output)
+		return fmt.Errorf("%s not installed or not accessible: %w\nOutput: %s", c.runtime, err, output)
 	}
 	return nil
 }
@@ -46,7 +62,7 @@ func (c *Client) PullImage(ctx context.Context, image, tag string) error {
 
 	// Pull the image
 	imageRef := fmt.Sprintf("%s:%s", image, tag)
-	cmd := exec.CommandContext(ctx, "docker", "pull", imageRef)
+	cmd := exec.CommandContext(ctx, c.runtime, "pull", imageRef)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to pull image %s: %w\nOutput: %s", imageRef, err, output)
@@ -55,21 +71,22 @@ func (c *Client) PullImage(ctx context.Context, image, tag string) error {
 	return nil
 }
 
-// ImageExists checks if a Docker image exists locally
+// ImageExists checks if a container image exists locally
 func (c *Client) ImageExists(ctx context.Context, image, tag string) (bool, error) {
 	imageRef := fmt.Sprintf("%s:%s", image, tag)
-	cmd := exec.CommandContext(ctx, "docker", "images", "-q", imageRef)
-	output, err := cmd.Output()
+	// Use inspect command which is more reliable across Docker versions
+	cmd := exec.CommandContext(ctx, c.runtime, "inspect", "--type=image", imageRef)
+	err := cmd.Run()
 	if err != nil {
-		return false, fmt.Errorf("failed to check image: %w", err)
+		// inspect returns non-zero exit if image doesn't exist
+		return false, nil
 	}
-
-	return len(strings.TrimSpace(string(output))) > 0, nil
+	return true, nil
 }
 
 // ContainerRunning checks if a container is running
 func (c *Client) ContainerRunning(ctx context.Context, containerName string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-q", "-f", fmt.Sprintf("name=%s", containerName))
+	cmd := exec.CommandContext(ctx, c.runtime, "ps", "-q", "-f", fmt.Sprintf("name=%s", containerName))
 	output, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("failed to check container: %w", err)
@@ -80,7 +97,7 @@ func (c *Client) ContainerRunning(ctx context.Context, containerName string) (bo
 
 // GetContainerID gets the container ID by name
 func (c *Client) GetContainerID(ctx context.Context, containerName string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "-q", "-f", fmt.Sprintf("name=%s", containerName))
+	cmd := exec.CommandContext(ctx, c.runtime, "ps", "-a", "-q", "-f", fmt.Sprintf("name=%s", containerName))
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to get container ID: %w", err)
@@ -96,7 +113,7 @@ func (c *Client) GetContainerID(ctx context.Context, containerName string) (stri
 
 // StopContainer stops a running container
 func (c *Client) StopContainer(ctx context.Context, containerName string) error {
-	cmd := exec.CommandContext(ctx, "docker", "stop", containerName)
+	cmd := exec.CommandContext(ctx, c.runtime, "stop", containerName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to stop container %s: %w\nOutput: %s", containerName, err, output)
@@ -106,7 +123,7 @@ func (c *Client) StopContainer(ctx context.Context, containerName string) error 
 
 // RemoveContainer removes a container
 func (c *Client) RemoveContainer(ctx context.Context, containerName string) error {
-	cmd := exec.CommandContext(ctx, "docker", "rm", "-f", containerName)
+	cmd := exec.CommandContext(ctx, c.runtime, "rm", "-f", containerName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Ignore error if container doesn't exist
@@ -115,4 +132,9 @@ func (c *Client) RemoveContainer(ctx context.Context, containerName string) erro
 		}
 	}
 	return nil
+}
+
+// GetRuntime returns the detected container runtime name
+func (c *Client) GetRuntime() string {
+	return c.runtime
 }

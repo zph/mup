@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
@@ -77,7 +78,29 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 			return fmt.Errorf("failed to start processes: %w", err)
 		}
 
-		// Get status for each node and save PIDs
+		// Show live progress while processes are starting
+		deadline := time.Now().Add(30 * time.Second)
+		started := make(map[string]bool)
+
+		for time.Now().Before(deadline) && len(started) < len(nodesToStart) {
+			for _, node := range nodesToStart {
+				if started[node.SupervisorProgramName] {
+					continue
+				}
+
+				status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
+				if err == nil && status.State == "Running" {
+					fmt.Printf("  ✓ %s %s:%d running (PID: %d)\n", node.Type, node.Host, node.Port, status.PID)
+					started[node.SupervisorProgramName] = true
+					node.PID = status.PID
+				}
+			}
+			if len(started) < len(nodesToStart) {
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+
+		// Get final status for each node and save PIDs
 		for _, node := range nodesToStart {
 			status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
 			if err != nil {
@@ -105,8 +128,32 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
+	// Start monitoring if enabled (only when starting all nodes)
+	if nodeFilter == "" && metadata.Monitoring != nil && metadata.Monitoring.Enabled {
+		fmt.Println("\nStarting monitoring infrastructure...")
+		if err := m.startMonitoring(ctx, clusterName); err != nil {
+			fmt.Printf("  Warning: Failed to start monitoring: %v\n", err)
+		} else {
+			fmt.Println("  ✓ Monitoring started")
+		}
+	}
+
 	fmt.Printf("\n✓ Started %d node(s) via supervisor\n", started)
 	return nil
+}
+
+// startMonitoring starts the monitoring infrastructure
+func (m *Manager) startMonitoring(ctx context.Context, clusterName string) error {
+	// Monitoring is now managed by cluster supervisor via the "monitoring" group
+	// Load cluster supervisor and start monitoring group
+	clusterDir := m.metaMgr.GetClusterDir(clusterName)
+	supMgr, err := supervisor.LoadManager(clusterDir, clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to load supervisor: %w", err)
+	}
+
+	// Start the monitoring group (Victoria Metrics + Grafana)
+	return supMgr.StartGroup("monitoring")
 }
 
 // Stop stops a cluster using supervisor
@@ -137,8 +184,22 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 		return nil
 	}
 
-	// Stop nodes via supervisor
-	stopped := 0
+	// Stop monitoring first if enabled and stopping all nodes
+	// This must be done BEFORE stopping supervisor daemon
+	if nodeFilter == "" && metadata.Monitoring != nil && metadata.Monitoring.Enabled {
+		fmt.Println("Stopping monitoring infrastructure...")
+		if err := m.stopMonitoring(ctx, clusterName); err != nil {
+			fmt.Printf("  Warning: Failed to stop monitoring: %v\n", err)
+		} else {
+			fmt.Println("  ✓ Monitoring stopped")
+		}
+		fmt.Println()
+	}
+
+	// Collect program names to stop in parallel
+	var programNames []string
+	var nodesToStop []*meta.NodeMetadata
+
 	for i := range metadata.Nodes {
 		node := &metadata.Nodes[i]
 		if nodeFilter != "" && fmt.Sprintf("%s:%d", node.Host, node.Port) != nodeFilter {
@@ -151,21 +212,30 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 			continue
 		}
 
-		if err := supMgr.StopProcess(node.SupervisorProgramName); err != nil {
-			// Log error but continue
-			fmt.Printf("  ! Failed to stop %s %s:%d: %v\n", node.Type, node.Host, node.Port, err)
-			continue
+		programNames = append(programNames, node.SupervisorProgramName)
+		nodesToStop = append(nodesToStop, node)
+	}
+
+	// Stop all MongoDB processes in parallel
+	if len(programNames) > 0 {
+		fmt.Printf("  Stopping %d node(s) in parallel...\n", len(programNames))
+		if err := supMgr.StopProcesses(programNames); err != nil {
+			return fmt.Errorf("failed to stop processes: %w", err)
 		}
 
-		fmt.Printf("  ✓ Stopped %s %s:%d\n", node.Type, node.Host, node.Port)
-		stopped++
+		// Show stopped nodes
+		for _, node := range nodesToStop {
+			fmt.Printf("  ✓ Stopped %s %s:%d\n", node.Type, node.Host, node.Port)
+		}
 	}
+
+	stopped := len(programNames)
 
 	if stopped == 0 && nodeFilter != "" {
 		return fmt.Errorf("no nodes matched filter '%s'", nodeFilter)
 	}
 
-	// If stopping all nodes, stop supervisor daemon too
+	// If stopping all nodes, stop supervisor daemon last
 	if nodeFilter == "" {
 		fmt.Println("  Stopping supervisor daemon...")
 		if err := supMgr.Stop(ctx); err != nil {
@@ -182,6 +252,20 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 
 	fmt.Printf("\n✓ Stopped %d node(s)\n", stopped)
 	return nil
+}
+
+// stopMonitoring stops the monitoring infrastructure
+func (m *Manager) stopMonitoring(ctx context.Context, clusterName string) error {
+	// Monitoring is now managed by cluster supervisor via the "monitoring" group
+	// Load cluster supervisor and stop monitoring group
+	clusterDir := m.metaMgr.GetClusterDir(clusterName)
+	supMgr, err := supervisor.LoadManager(clusterDir, clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to load supervisor: %w", err)
+	}
+
+	// Stop the monitoring group (Victoria Metrics + Grafana)
+	return supMgr.StopGroup("monitoring")
 }
 
 // startNode starts a single MongoDB node and updates PID in metadata

@@ -19,6 +19,7 @@ var (
 	clusterDeployIdentityFile string
 	clusterDeployYes          bool
 	clusterDeployTimeout      time.Duration
+	clusterDeployNoMonitoring bool
 
 	clusterNodeFilter    string
 	clusterDisplayFormat string
@@ -45,9 +46,18 @@ The deployment supports two modes:
 - LOCAL: All nodes on localhost with auto-allocated ports (30000+)
 - REMOTE: Nodes on remote hosts via SSH with standard ports
 
+Monitoring is enabled by default and includes:
+- Victoria Metrics (time-series database)
+- Grafana (visualization with pre-configured dashboards)
+- node_exporter (OS and hardware metrics)
+- mongodb_exporter (MongoDB-specific metrics)
+
 Examples:
-  # Deploy a local 3-node replica set
+  # Deploy a local 3-node replica set with monitoring
   mup cluster deploy my-rs replica-set.yaml
+
+  # Deploy without monitoring
+  mup cluster deploy my-rs replica-set.yaml --no-monitoring
 
   # Deploy a remote sharded cluster
   mup cluster deploy prod-cluster sharded.yaml --user admin
@@ -65,12 +75,13 @@ Examples:
 
 		// Create deployer
 		cfg := deploy.DeployConfig{
-			ClusterName:  clusterName,
-			Version:      clusterDeployVersion,
-			TopologyFile: topologyFile,
-			SSHUser:      clusterDeployUser,
-			IdentityFile: clusterDeployIdentityFile,
-			SkipConfirm:  clusterDeployYes,
+			ClusterName:       clusterName,
+			Version:           clusterDeployVersion,
+			TopologyFile:      topologyFile,
+			SSHUser:           clusterDeployUser,
+			IdentityFile:      clusterDeployIdentityFile,
+			SkipConfirm:       clusterDeployYes,
+			DisableMonitoring: clusterDeployNoMonitoring,
 		}
 
 		deployer, err := deploy.NewDeployer(cfg)
@@ -284,6 +295,7 @@ func init() {
 	clusterDeployCmd.Flags().StringVar(&clusterDeployIdentityFile, "identity-file", "", "SSH private key path")
 	clusterDeployCmd.Flags().BoolVar(&clusterDeployYes, "yes", false, "Skip confirmation prompts")
 	clusterDeployCmd.Flags().DurationVarP(&clusterDeployTimeout, "timeout", "t", 30*time.Minute, "Deployment timeout")
+	clusterDeployCmd.Flags().BoolVar(&clusterDeployNoMonitoring, "no-monitoring", false, "Disable monitoring deployment (Victoria Metrics, Grafana, exporters)")
 
 	// Start/stop command flags
 	clusterStartCmd.Flags().StringVar(&clusterNodeFilter, "node", "", "Start specific node only (host:port)")

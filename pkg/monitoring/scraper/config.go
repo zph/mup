@@ -16,9 +16,8 @@ type ScrapeConfig struct {
 
 // GlobalConfig contains global scrape settings
 type GlobalConfig struct {
-	ScrapeInterval     string            `yaml:"scrape_interval"`
-	EvaluationInterval string            `yaml:"evaluation_interval"`
-	ExternalLabels     map[string]string `yaml:"external_labels"`
+	ScrapeInterval string            `yaml:"scrape_interval"`
+	ExternalLabels map[string]string `yaml:"external_labels"`
 }
 
 // JobConfig represents a scrape job
@@ -56,8 +55,7 @@ type MongoDBExporterInfo struct {
 func GenerateScrapeConfig(clusterName string, topo *topology.Topology, registry *ExporterRegistry, scrapeInterval string) (*ScrapeConfig, error) {
 	config := &ScrapeConfig{
 		Global: GlobalConfig{
-			ScrapeInterval:     scrapeInterval,
-			EvaluationInterval: scrapeInterval,
+			ScrapeInterval: scrapeInterval,
 			ExternalLabels: map[string]string{
 				"cluster": clusterName,
 			},

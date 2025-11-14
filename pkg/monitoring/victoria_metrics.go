@@ -52,8 +52,12 @@ func (vm *VictoriaMetricsManager) EnsureImage(ctx context.Context) error {
 
 // GenerateSupervisorConfig generates supervisord configuration for Victoria Metrics
 func (vm *VictoriaMetricsManager) GenerateSupervisorConfig(scrapeConfigPath string) string {
+	// Use detected container runtime (docker or podman)
+	runtime := vm.dockerClient.GetRuntime()
+	// Use port mapping instead of host networking for macOS Docker Desktop compatibility
+	// Exporters listen on 0.0.0.0 so they're reachable via host.docker.internal
 	return fmt.Sprintf(`[program:%s]
-command = docker run --rm \
+command = %s run --rm \
   --name %s \
   -p 127.0.0.1:%d:8428 \
   -v %s:/victoria-metrics-data \
@@ -61,7 +65,8 @@ command = docker run --rm \
   %s:%s \
   -promscrape.config=/etc/victoria-metrics/promscrape.yaml \
   -retentionPeriod=%s \
-  -storageDataPath=/victoria-metrics-data
+  -storageDataPath=/victoria-metrics-data \
+  -httpListenAddr=:8428
 autostart = false
 autorestart = unexpected
 startsecs = 5
@@ -70,6 +75,7 @@ stopwaitsecs = 30
 stopsignal = TERM
 `,
 		VictoriaMetricsProgramName,
+		runtime,
 		VictoriaMetricsContainerName,
 		vm.port,
 		vm.dataDir,

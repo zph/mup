@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // SSHConfig holds SSH connection configuration
@@ -25,8 +27,9 @@ type SSHConfig struct {
 
 // SSHExecutor implements Executor for remote operations via SSH
 type SSHExecutor struct {
-	config SSHConfig
-	client *ssh.Client
+	config    SSHConfig
+	client    *ssh.Client
+	agentConn net.Conn // Keep agent connection alive for the lifetime of the executor
 }
 
 // NewSSHExecutor creates a new SSH executor and establishes connection
@@ -46,9 +49,13 @@ func NewSSHExecutor(config SSHConfig) (*SSHExecutor, error) {
 		Timeout:         config.Timeout,
 	}
 
-	// Add authentication methods
+	// Add authentication methods in order of preference:
+	// 1. Physical key file (if provided)
+	// 2. SSH agent (if available)
+	// 3. Password (if provided)
+
 	if config.KeyFile != "" {
-		// Key-based authentication
+		// Key-based authentication from file
 		key, err := os.ReadFile(config.KeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read SSH key file: %w", err)
@@ -62,13 +69,30 @@ func NewSSHExecutor(config SSHConfig) (*SSHExecutor, error) {
 		sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(signer))
 	}
 
+	// Try SSH agent if available
+	var agentConn net.Conn
+	if conn, err := getSSHAgentConnection(); err == nil {
+		agentConn = conn
+		// SSH agent is available, create agent client and add its keys
+		sshAgent := agent.NewClient(agentConn)
+		signers, err := sshAgent.Signers()
+		if err == nil && len(signers) > 0 {
+			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(signers...))
+			// Keep the connection alive for the lifetime of the executor
+		} else {
+			// No signers available, close the connection
+			agentConn.Close()
+			agentConn = nil
+		}
+	}
+
 	if config.Password != "" {
 		// Password authentication
 		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(config.Password))
 	}
 
 	if len(sshConfig.Auth) == 0 {
-		return nil, fmt.Errorf("no authentication method provided (need key file or password)")
+		return nil, fmt.Errorf("no authentication method provided (need key file, SSH agent, or password)")
 	}
 
 	// Connect to SSH server
@@ -78,10 +102,13 @@ func NewSSHExecutor(config SSHConfig) (*SSHExecutor, error) {
 		return nil, fmt.Errorf("failed to connect to SSH server at %s: %w", addr, err)
 	}
 
-	return &SSHExecutor{
-		config: config,
-		client: client,
-	}, nil
+	executor := &SSHExecutor{
+		config:    config,
+		client:    client,
+		agentConn: agentConn,
+	}
+
+	return executor, nil
 }
 
 // CreateDirectory creates a directory with the specified permissions
@@ -365,10 +392,39 @@ func (e *SSHExecutor) CheckConnectivity() error {
 	return err
 }
 
-// Close closes the SSH connection
+// Close closes the SSH connection and agent connection
 func (e *SSHExecutor) Close() error {
+	var errs []error
 	if e.client != nil {
-		return e.client.Close()
+		if err := e.client.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if e.agentConn != nil {
+		if err := e.agentConn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing connections: %v", errs)
 	}
 	return nil
+}
+
+// getSSHAgentConnection connects to the SSH agent socket and returns the connection
+// Returns error if SSH agent is not available
+func getSSHAgentConnection() (net.Conn, error) {
+	// Check if SSH_AUTH_SOCK environment variable is set
+	sock := os.Getenv("SSH_AUTH_SOCK")
+	if sock == "" {
+		return nil, fmt.Errorf("SSH_AUTH_SOCK not set")
+	}
+
+	// Connect to the SSH agent socket
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
+	}
+
+	return conn, nil
 }

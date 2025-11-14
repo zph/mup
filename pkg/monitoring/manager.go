@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zph/mup/pkg/executor"
@@ -32,7 +33,7 @@ type Manager struct {
 }
 
 // NewManager creates a new monitoring manager
-func NewManager(baseDir string, config *Config, exec executor.Executor) (*Manager, error) {
+func NewManager(baseDir string, config *Config, exec executor.Executor, supMgr *supervisor.Manager) (*Manager, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -41,7 +42,11 @@ func NewManager(baseDir string, config *Config, exec executor.Executor) (*Manage
 		return nil, fmt.Errorf("executor is required")
 	}
 
-	// Create base monitoring directory
+	if supMgr == nil {
+		return nil, fmt.Errorf("supervisor manager is required")
+	}
+
+	// Create base monitoring directory within cluster dir
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create monitoring directory: %w", err)
 	}
@@ -106,6 +111,7 @@ func NewManager(baseDir string, config *Config, exec executor.Executor) (*Manage
 		config:             config,
 		victoriaMetrics:    vmManager,
 		grafana:            grafanaManager,
+		supervisorMgr:      supMgr,
 		dockerClient:       docker.NewClient(),
 		nodeExporterMgr:    nodeExporterMgr,
 		mongoDBExporterMgr: mongoExporterMgr,
@@ -130,9 +136,9 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to ensure grafana image: %w", err)
 	}
 
-	// Initialize supervisord for monitoring
-	if err := m.initializeSupervisor(ctx); err != nil {
-		return fmt.Errorf("failed to initialize supervisor: %w", err)
+	// Add monitoring programs to cluster supervisor config (without exporters initially)
+	if err := m.addMonitoringToSupervisor(nil); err != nil {
+		return fmt.Errorf("failed to add monitoring to supervisor: %w", err)
 	}
 
 	// Create Grafana provisioning configs
@@ -143,71 +149,114 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// initializeSupervisor sets up supervisord for monitoring components
-func (m *Manager) initializeSupervisor(ctx context.Context) error {
-	// Create supervisor manager for monitoring
-	supMgr, err := supervisor.NewManager(m.baseDir, "monitoring")
-	if err != nil {
-		return fmt.Errorf("failed to create supervisor manager: %w", err)
+// addMonitoringToSupervisor adds monitoring programs to the cluster's supervisor config
+// If exporterRegistry is nil, only Victoria Metrics and Grafana are added (for initial setup)
+// If exporterRegistry is provided, exporters are also added (for full deployment)
+func (m *Manager) addMonitoringToSupervisor(exporterRegistry *scraper.ExporterRegistry) error {
+	// Create monitoring-specific config file in cluster directory (parent of baseDir)
+	clusterDir := filepath.Dir(m.baseDir)
+	monitoringConfigPath := filepath.Join(clusterDir, "monitoring-supervisor.ini")
+
+	// Get scrape config path
+	scrapeConfigPath := filepath.Join(m.victoriaMetrics.GetConfigDir(), "promscrape.yaml")
+
+	// Generate monitoring programs config (no [supervisord] section - that's in main supervisor.ini)
+	var monitoringConfig string
+	var programs []string
+
+	// Add Victoria Metrics program
+	monitoringConfig += m.victoriaMetrics.GenerateSupervisorConfig(scrapeConfigPath)
+	monitoringConfig += "\n"
+	programs = append(programs, VictoriaMetricsProgramName)
+
+	// Add Grafana program
+	monitoringConfig += m.grafana.GenerateSupervisorConfig()
+	monitoringConfig += "\n"
+	programs = append(programs, GrafanaProgramName)
+
+	// Add exporter programs if registry is provided
+	if exporterRegistry != nil {
+		logsDir := filepath.Join(m.baseDir, "logs", "exporters")
+
+		// Ensure binaries are downloaded
+		nodeExporterBinary, err := m.nodeExporterMgr.EnsureBinary(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to ensure node_exporter binary: %w", err)
+		}
+
+		mongoDBExporterBinary, err := m.mongoDBExporterMgr.EnsureBinary(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to ensure mongodb_exporter binary: %w", err)
+		}
+
+		// Add node_exporter programs
+		for i, ne := range exporterRegistry.NodeExporters {
+			programName := fmt.Sprintf("node-exporter-%d", i)
+			logFile := filepath.Join(logsDir, fmt.Sprintf("node_exporter-%s-%d.log", ne.Host, ne.Port))
+
+			monitoringConfig += m.nodeExporterMgr.GenerateSupervisorConfig(
+				programName,
+				ne.Host,
+				ne.Port,
+				nodeExporterBinary,
+				logFile,
+			)
+			monitoringConfig += "\n"
+			programs = append(programs, programName)
+		}
+
+		// Add mongodb_exporter programs
+		for i, me := range exporterRegistry.MongoDBExporters {
+			programName := fmt.Sprintf("mongodb-exporter-%d", i)
+			logFile := filepath.Join(logsDir, fmt.Sprintf("mongodb_exporter-%s-%d.log", me.Host, me.ExporterPort))
+
+			monitoringConfig += m.mongoDBExporterMgr.GenerateSupervisorConfig(
+				programName,
+				me.Host,
+				me.ExporterPort,
+				me.MongoDBPort,
+				mongoDBExporterBinary,
+				logFile,
+			)
+			monitoringConfig += "\n"
+			programs = append(programs, programName)
+		}
 	}
 
-	m.supervisorMgr = supMgr
+	// Add monitoring group with all programs
+	monitoringConfig += "[group:monitoring]\n"
+	monitoringConfig += fmt.Sprintf("programs = %s\n", joinPrograms(programs))
 
-	// Generate supervisor config with monitoring programs
-	if err := m.generateSupervisorConfig(); err != nil {
-		return fmt.Errorf("failed to generate supervisor config: %w", err)
+	// Write monitoring config
+	if err := os.WriteFile(monitoringConfigPath, []byte(monitoringConfig), 0644); err != nil {
+		return fmt.Errorf("failed to write monitoring supervisor config: %w", err)
 	}
 
 	return nil
 }
 
-// generateSupervisorConfig generates the main supervisord config for monitoring
-func (m *Manager) generateSupervisorConfig() error {
-	configPath := filepath.Join(m.baseDir, "supervisor.ini")
-	logsDir := filepath.Join(m.baseDir, "logs")
-
-	// Will implement with actual scrape config path
-	scrapeConfigPath := filepath.Join(m.victoriaMetrics.GetConfigDir(), "promscrape.yaml")
-
-	// Generate main config
-	mainConfig := fmt.Sprintf(`[supervisord]
-logfile = %s/supervisord.log
-loglevel = info
-pidfile = %s/supervisor.pid
-nodaemon = false
-
-[inet_http_server]
-port = 127.0.0.1:9002
-
-`, logsDir, m.baseDir)
-
-	// Add Victoria Metrics program
-	mainConfig += m.victoriaMetrics.GenerateSupervisorConfig(scrapeConfigPath)
-	mainConfig += "\n"
-
-	// Add Grafana program
-	mainConfig += m.grafana.GenerateSupervisorConfig()
-	mainConfig += "\n"
-
-	// Add monitoring group
-	mainConfig += fmt.Sprintf(`[group:monitoring]
-programs = %s,%s
-`,
-		VictoriaMetricsProgramName,
-		GrafanaProgramName,
-	)
-
-	// Write config
-	if err := os.WriteFile(configPath, []byte(mainConfig), 0644); err != nil {
-		return fmt.Errorf("failed to write supervisor config: %w", err)
+// joinPrograms joins program names with commas
+func joinPrograms(programs []string) string {
+	result := ""
+	for i, prog := range programs {
+		if i > 0 {
+			result += ","
+		}
+		result += prog
 	}
-
-	return nil
+	return result
 }
 
 // createGrafanaProvisioning creates datasource and dashboard provisioning configs
 func (m *Manager) createGrafanaProvisioning(ctx context.Context) error {
 	// Create datasource provisioning
+	// Use host.docker.internal for Grafana in Docker to reach Victoria Metrics on host
+	vmURL := m.victoriaMetrics.GetURL()
+	// Replace localhost with host.docker.internal for Docker container access
+	if strings.Contains(vmURL, "localhost") {
+		vmURL = strings.Replace(vmURL, "localhost", "host.docker.internal", 1)
+	}
+
 	datasourceConfig := fmt.Sprintf(`apiVersion: 1
 
 datasources:
@@ -221,7 +270,7 @@ datasources:
       timeInterval: %s
       httpMethod: POST
 `,
-		m.victoriaMetrics.GetURL(),
+		vmURL,
 		m.config.ScrapeInterval,
 	)
 
@@ -231,7 +280,8 @@ datasources:
 	}
 
 	// Create dashboard provisioning
-	dashboardConfig := fmt.Sprintf(`apiVersion: 1
+	// NOTE: Use container path, not host path, since this config is read inside the Grafana container
+	dashboardConfig := `apiVersion: 1
 
 providers:
   - name: 'Mup MongoDB Dashboards'
@@ -242,11 +292,9 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: %s
+      path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: true
-`,
-		m.grafana.GetDashboardsDir(),
-	)
+`
 
 	dashboardProvPath := filepath.Join(m.grafana.GetProvisioningDir(), "dashboards", "default.yaml")
 	if err := os.WriteFile(dashboardProvPath, []byte(dashboardConfig), 0644); err != nil {
@@ -391,7 +439,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 		vmStatus, err := m.supervisorMgr.GetProcessStatus(VictoriaMetricsProgramName)
 		if err == nil {
-			status.VictoriaMetrics.Running = vmStatus.State == "RUNNING"
+			status.VictoriaMetrics.Running = vmStatus.State == "Running"
 			status.VictoriaMetrics.PID = vmStatus.PID
 			status.VictoriaMetrics.Uptime = time.Duration(vmStatus.Uptime) * time.Second
 		} else {
@@ -403,7 +451,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 		grafanaStatus, err := m.supervisorMgr.GetProcessStatus(GrafanaProgramName)
 		if err == nil {
-			status.Grafana.Running = grafanaStatus.State == "RUNNING"
+			status.Grafana.Running = grafanaStatus.State == "Running"
 			status.Grafana.PID = grafanaStatus.PID
 			status.Grafana.Uptime = time.Duration(grafanaStatus.Uptime) * time.Second
 		} else {
@@ -414,19 +462,19 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	// Check exporters (from exporter registry if available)
 	if m.exporterRegistry != nil {
 		// Check node_exporters
-		for _, ne := range m.exporterRegistry.NodeExporters {
+		for i, ne := range m.exporterRegistry.NodeExporters {
 			expHealth := ExporterHealth{
 				Type: "node_exporter",
 				Host: ne.Host,
 				Port: ne.Port,
 			}
 
-			// Try to check via supervisord
-			programName := fmt.Sprintf("node_exporter-%d", ne.Port)
+			// Check via supervisord
+			programName := fmt.Sprintf("node-exporter-%d", i)
 			if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 				procStatus, err := m.supervisorMgr.GetProcessStatus(programName)
 				if err == nil {
-					expHealth.Running = procStatus.State == "RUNNING"
+					expHealth.Running = procStatus.State == "Running"
 					expHealth.PID = procStatus.PID
 				} else {
 					// Fallback to port check
@@ -441,19 +489,19 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 		}
 
 		// Check mongodb_exporters
-		for _, me := range m.exporterRegistry.MongoDBExporters {
+		for i, me := range m.exporterRegistry.MongoDBExporters {
 			expHealth := ExporterHealth{
 				Type: "mongodb_exporter",
 				Host: me.Host,
 				Port: me.ExporterPort,
 			}
 
-			// Try to check via supervisord
-			programName := fmt.Sprintf("mongodb_exporter-%d", me.ExporterPort)
+			// Check via supervisord
+			programName := fmt.Sprintf("mongodb-exporter-%d", i)
 			if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 				procStatus, err := m.supervisorMgr.GetProcessStatus(programName)
 				if err == nil {
-					expHealth.Running = procStatus.State == "RUNNING"
+					expHealth.Running = procStatus.State == "Running"
 					expHealth.PID = procStatus.PID
 				} else {
 					// Fallback to port check
@@ -511,7 +559,7 @@ func (m *Manager) GetGrafanaAdminPassword() (string, error) {
 	return m.grafana.GetAdminPassword()
 }
 
-// DeployExporters deploys all exporters for a cluster
+// DeployExporters deploys all exporters for a cluster using supervisord
 func (m *Manager) DeployExporters(ctx context.Context, clusterName string, topo *topology.Topology) (*meta.MonitoringMetadata, error) {
 	// Build exporter registry
 	m.exporterRegistry = scraper.BuildExporterRegistry(
@@ -528,32 +576,42 @@ func (m *Manager) DeployExporters(ctx context.Context, clusterName string, topo 
 		MongoDBExporters:   []meta.MongoDBExporterMetadata{},
 	}
 
-	// Deploy node_exporters
-	for _, ne := range m.exporterRegistry.NodeExporters {
-		instance, err := m.nodeExporterMgr.Start(ctx, ne.Host, ne.Port)
-		if err != nil {
+	// Regenerate monitoring-supervisor.ini with exporters included
+	if err := m.addMonitoringToSupervisor(m.exporterRegistry); err != nil {
+		return nil, fmt.Errorf("failed to add exporters to supervisor: %w", err)
+	}
+
+	// Reload supervisord to pick up new exporter programs
+	if err := m.supervisorMgr.Reload(); err != nil {
+		return nil, fmt.Errorf("failed to reload supervisor config: %w", err)
+	}
+
+	// Start node_exporters via supervisord
+	for i, ne := range m.exporterRegistry.NodeExporters {
+		programName := fmt.Sprintf("node-exporter-%d", i)
+		if err := m.supervisorMgr.StartProcess(programName); err != nil {
 			return nil, fmt.Errorf("failed to start node_exporter on %s:%d: %w", ne.Host, ne.Port, err)
 		}
 
 		monitoringMeta.NodeExporters = append(monitoringMeta.NodeExporters, meta.NodeExporterMetadata{
-			Host: instance.Host,
-			Port: instance.Port,
-			PID:  instance.PID,
+			Host: ne.Host,
+			Port: ne.Port,
+			// PID not stored - managed by supervisord
 		})
 	}
 
-	// Deploy mongodb_exporters
-	for _, me := range m.exporterRegistry.MongoDBExporters {
-		instance, err := m.mongoDBExporterMgr.Start(ctx, me.Host, me.ExporterPort, me.MongoDBPort)
-		if err != nil {
+	// Start mongodb_exporters via supervisord
+	for i, me := range m.exporterRegistry.MongoDBExporters {
+		programName := fmt.Sprintf("mongodb-exporter-%d", i)
+		if err := m.supervisorMgr.StartProcess(programName); err != nil {
 			return nil, fmt.Errorf("failed to start mongodb_exporter on %s:%d: %w", me.Host, me.ExporterPort, err)
 		}
 
 		monitoringMeta.MongoDBExporters = append(monitoringMeta.MongoDBExporters, meta.MongoDBExporterMetadata{
-			Host:         instance.Host,
-			ExporterPort: instance.ExporterPort,
-			MongoDBPort:  instance.MongoDBPort,
-			PID:          instance.PID,
+			Host:         me.Host,
+			ExporterPort: me.ExporterPort,
+			MongoDBPort:  me.MongoDBPort,
+			// PID not stored - managed by supervisord
 		})
 	}
 
@@ -585,29 +643,27 @@ func (m *Manager) updateScrapeConfig(ctx context.Context, clusterName string, to
 	return nil
 }
 
-// StopExporters stops all exporters
+// StopExporters stops all exporters via supervisord
 func (m *Manager) StopExporters(ctx context.Context, monitoringMeta *meta.MonitoringMetadata) error {
 	if monitoringMeta == nil {
 		return nil
 	}
 
-	// Stop node_exporters
-	for _, ne := range monitoringMeta.NodeExporters {
-		if ne.PID > 0 {
-			if err := m.nodeExporterMgr.Stop(ctx, ne.PID); err != nil {
-				// Log but don't fail on error
-				fmt.Printf("Warning: failed to stop node_exporter (PID %d): %v\n", ne.PID, err)
-			}
+	// Stop node_exporters via supervisord
+	for i := range monitoringMeta.NodeExporters {
+		programName := fmt.Sprintf("node-exporter-%d", i)
+		if err := m.supervisorMgr.StopProcess(programName); err != nil {
+			// Log but don't fail on error
+			fmt.Printf("Warning: failed to stop %s: %v\n", programName, err)
 		}
 	}
 
-	// Stop mongodb_exporters
-	for _, me := range monitoringMeta.MongoDBExporters {
-		if me.PID > 0 {
-			if err := m.mongoDBExporterMgr.Stop(ctx, me.PID); err != nil {
-				// Log but don't fail on error
-				fmt.Printf("Warning: failed to stop mongodb_exporter (PID %d): %v\n", me.PID, err)
-			}
+	// Stop mongodb_exporters via supervisord
+	for i := range monitoringMeta.MongoDBExporters {
+		programName := fmt.Sprintf("mongodb-exporter-%d", i)
+		if err := m.supervisorMgr.StopProcess(programName); err != nil {
+			// Log but don't fail on error
+			fmt.Printf("Warning: failed to stop %s: %v\n", programName, err)
 		}
 	}
 

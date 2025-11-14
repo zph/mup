@@ -124,18 +124,19 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	monitoringEnabled := !cfg.DisableMonitoring
 
 	if monitoringEnabled {
-		monitoringDir := filepath.Join(homeDir, ".mup", "monitoring")
+		// Monitoring files go in cluster directory
+		monitoringDir := filepath.Join(metaDir, "monitoring")
 		monitoringConfig := monitoring.DefaultConfig()
 
 		// Get local executor for monitoring (monitoring runs locally even for remote clusters)
 		localExec := executor.NewLocalExecutor()
 
-		monitoringMgr, err = monitoring.NewManager(monitoringDir, monitoringConfig, localExec)
+		monitoringMgr, err = monitoring.NewManager(monitoringDir, monitoringConfig, localExec, supervisorMgr)
 		if err != nil {
 			fmt.Printf("Warning: Failed to initialize monitoring (will deploy without monitoring): %v\n", err)
 			monitoringEnabled = false
 		} else {
-			fmt.Println("✓ Monitoring enabled")
+			fmt.Println("✓ Monitoring enabled (managed by cluster supervisor)")
 		}
 	} else {
 		fmt.Println("✓ Monitoring disabled (--no-monitoring)")

@@ -146,17 +146,21 @@ func TestConfigGenerator_GenerateAll(t *testing.T) {
 	err := gen.GenerateAll()
 	require.NoError(t, err)
 
-	// Verify main config created
-	_, err = os.Stat(filepath.Join(tempDir, "supervisor.ini"))
+	// Verify main unified config created
+	configPath := filepath.Join(tempDir, "supervisor.ini")
+	_, err = os.Stat(configPath)
 	require.NoError(t, err)
 
-	// Verify all mongod configs created
+	// Read and verify content includes all mongod programs
+	content, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	configStr := string(content)
+
+	// Verify all mongod programs are included in the unified config
 	for _, node := range topo.Mongod {
-		configPath := filepath.Join(tempDir, "conf",
-			fmt.Sprintf("%s-%d", node.Host, node.Port),
-			"supervisor-mongod.ini")
-		_, err = os.Stat(configPath)
-		assert.NoError(t, err, "Config should exist for %s:%d", node.Host, node.Port)
+		programName := fmt.Sprintf("[program:mongod-%d]", node.Port)
+		assert.Contains(t, configStr, programName, "Config should include program for %s:%d", node.Host, node.Port)
 	}
 }
 
@@ -190,7 +194,6 @@ func TestLoadManager(t *testing.T) {
 	mgr, err := LoadManager(tempDir, clusterName)
 	require.NoError(t, err)
 	assert.NotNil(t, mgr)
-	assert.NotNil(t, mgr.config)
 }
 
 func TestManager_StartStop(t *testing.T) {
