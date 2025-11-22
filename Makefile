@@ -7,14 +7,14 @@ BINARY_NAME := mup
 # Go parameters
 GOCMD := go
 GOBUILD := $(GOCMD) build
-GOTEST := $(GOCMD) test
+GOTEST := gotestsum --
 GOMOD := $(GOCMD) mod
 GOINSTALL := $(GOCMD) install
 
 # Build flags
 LDFLAGS := -ldflags "-s -w"
 
-all: build
+all: help
 
 ## build: Build the mup binary
 build:
@@ -29,17 +29,43 @@ clean:
 	@rm -rf $(BIN_DIR)
 	@echo "✓ Cleaned"
 
-## test: Run tests
+## test: Run tests (excluding integration tests that download binaries)
 test:
 	@echo "Running tests..."
+	$(GOTEST) -short -v ./...
+
+## test-short: Alias for test (runs quick unit tests)
+test-short:
+	@echo "Running quick tests..."
+	$(GOTEST) -short -v ./...
+
+## test-integration: Run all integration tests (including binary downloads)
+test-integration:
+	@echo "Running integration tests (this may download binaries)..."
 	$(GOTEST) -v ./...
 
-## test-coverage: Run tests with coverage
+## test-coverage: Run tests with coverage (excluding integration tests)
 test-coverage:
 	@echo "Running tests with coverage..."
-	$(GOTEST) -v -coverprofile=coverage.out ./...
+	$(GOTEST) -short -v -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "✓ Coverage report generated: coverage.html"
+
+## test-ssh-short: Run quick SSH tests (skip integration tests)
+test-ssh-short:
+	@echo "Running quick SSH tests..."
+	$(GOTEST) -short -v ./pkg/executor/
+
+## test-ssh: Run full SSH integration tests (requires Docker)
+test-ssh: docker-ssh-image
+	@echo "Running SSH integration tests..."
+	@echo "Note: This will launch Docker containers for testing"
+	$(GOTEST) -v -run TestSSH ./pkg/executor/
+
+## test-all: Run all tests including SSH integration tests
+test-all: docker-ssh-image
+	@echo "Running all tests including SSH integration tests..."
+	$(GOTEST) -v ./...
 
 ## install: Install mup to $GOPATH/bin
 install:
@@ -84,22 +110,6 @@ run: build
 docker-ssh-image:
 	@echo "Building SSH test node Docker image..."
 	@bash test/docker/ssh-node/build.sh
-
-## test-ssh-short: Run quick SSH tests (skip integration tests)
-test-ssh-short:
-	@echo "Running quick SSH tests..."
-	$(GOTEST) -short -v ./pkg/executor/
-
-## test-ssh: Run full SSH integration tests (requires Docker)
-test-ssh: docker-ssh-image
-	@echo "Running SSH integration tests..."
-	@echo "Note: This will launch Docker containers for testing"
-	$(GOTEST) -v -run TestSSH ./pkg/executor/
-
-## test-all: Run all tests including SSH integration tests
-test-all: docker-ssh-image
-	@echo "Running all tests including SSH integration tests..."
-	$(GOTEST) -v ./...
 
 ## help: Show this help message
 help:

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -130,41 +131,63 @@ func (bm *BinaryManager) getMongoDBVersions() (*MongoDBFullJSON, error) {
 
 // GetBinPathForPlatform gets the bin path for a specific platform
 // Downloads and caches binaries for any platform/architecture combination
+// Uses VariantMongo by default for backward compatibility
 func (bm *BinaryManager) GetBinPathForPlatform(version string, platform Platform) (string, error) {
+	return bm.GetBinPathWithVariant(version, VariantMongo, platform)
+}
+
+// GetBinPathWithVariant gets the bin path for a specific platform and variant
+// [UPG-002] Supports both "mongo" and "percona" variants
+// Downloads and caches binaries for any variant/platform/architecture combination
+func (bm *BinaryManager) GetBinPathWithVariant(version string, variant Variant, platform Platform) (string, error) {
 	platformKey := platform.Key()
+	cacheKey := fmt.Sprintf("%s-%s-%s", variant.String(), version, platformKey)
 
 	// Check in-memory cache first
 	bm.mu.Lock()
-	if cached, ok := bm.binPaths[platformKey]; ok {
+	if cached, ok := bm.binPaths[cacheKey]; ok {
 		bm.mu.Unlock()
 		return cached, nil
 	}
 	bm.mu.Unlock()
 
-	// Resolve version (X.Y -> latest X.Y.Z)
-	resolvedVersion, err := bm.resolveVersion(version)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve version: %w", err)
+	// Resolve version (X.Y -> latest X.Y.Z) - only for mongo variant
+	// Percona versions are used as-is since they have build numbers
+	resolvedVersion := version
+	if variant == VariantMongo {
+		var err error
+		resolvedVersion, err = bm.resolveVersion(version)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve version: %w", err)
+		}
 	}
 
-	// Download and cache for this platform
-	binPath, err := bm.downloadForPlatform(resolvedVersion, platform)
+	// Download and cache for this variant/platform
+	binPath, err := bm.downloadWithVariant(resolvedVersion, variant, platform)
 	if err != nil {
-		return "", fmt.Errorf("failed to download for platform %s: %w", platformKey, err)
+		return "", fmt.Errorf("failed to download %s %s for platform %s: %w", variant, resolvedVersion, platformKey, err)
 	}
 
 	bm.mu.Lock()
-	bm.binPaths[platformKey] = binPath
+	bm.binPaths[cacheKey] = binPath
 	bm.mu.Unlock()
 
 	return binPath, nil
 }
 
 // downloadForPlatform downloads MongoDB binaries for a specific platform
+// Uses VariantMongo for backward compatibility
 func (bm *BinaryManager) downloadForPlatform(version string, platform Platform) (string, error) {
-	// Cache location: ~/.mup/storage/packages/{version}-{os}-{arch}/bin
+	return bm.downloadWithVariant(version, VariantMongo, platform)
+}
+
+// downloadWithVariant downloads binaries for a specific variant and platform
+// [UPG-002] Supports both "mongo" and "percona" variants
+func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, platform Platform) (string, error) {
+	// Cache location: ~/.mup/storage/packages/{variant}-{version}-{os}-{arch}/bin
 	platformKey := platform.Key()
-	cacheDir := filepath.Join(bm.cacheDir, fmt.Sprintf("%s-%s", version, platformKey))
+	fullVersion := fmt.Sprintf("%s-%s", variant, version)
+	cacheDir := filepath.Join(bm.cacheDir, fmt.Sprintf("%s-%s", fullVersion, platformKey))
 	binPath := filepath.Join(cacheDir, "bin")
 
 	// Check if already cached in storage/packages
@@ -196,59 +219,38 @@ func (bm *BinaryManager) downloadForPlatform(version string, platform Platform) 
 		}
 	}
 
-	// Need to download - get download URL
-	url, err := bm.getDownloadURLForPlatform(version, platform)
-	if err != nil {
-		return "", fmt.Errorf("failed to get download URL: %w", err)
+	// Need to download - get download URL based on variant
+	var url string
+	var err error
+	var useDebPackages bool
+	var debURLs map[string]string
+
+	switch variant {
+	case VariantMongo:
+		url, err = bm.getDownloadURLForPlatform(version, platform)
+		if err != nil {
+			return "", fmt.Errorf("failed to get download URL: %w", err)
+		}
+	case VariantPercona:
+		// Try tarball first
+		url, err = bm.buildPerconaURL(version, platform)
+		if err != nil {
+			// Tarball not found, try .deb packages for Linux
+			fmt.Printf("  Tarball not available, trying .deb packages...\n")
+			debURLs, err = bm.buildPerconaDebURLs(version, platform)
+			if err != nil {
+				return "", fmt.Errorf("failed to get Percona binaries: no tarballs or .deb packages available: %w", err)
+			}
+			useDebPackages = true
+		}
+	default:
+		return "", fmt.Errorf("unknown variant: %s", variant)
 	}
 
-	fmt.Printf("  Downloading MongoDB %s for %s from %s...\n", version, platformKey, url)
-
-	// Download the archive
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to download: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
-	}
-
-	// Create temp directory for extraction
-	tempDir, err := os.MkdirTemp("", fmt.Sprintf("mongodb-%s-%s-*", version, platformKey))
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create temp file for archive
-	tmpFile, err := os.CreateTemp("", fmt.Sprintf("mongodb-%s-*.tgz", platformKey))
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Download to temp file
-	if _, err := tmpFile.ReadFrom(resp.Body); err != nil {
-		return "", fmt.Errorf("failed to download to temp file: %w", err)
-	}
-
-	// Reset file pointer
-	if _, err := tmpFile.Seek(0, 0); err != nil {
-		return "", fmt.Errorf("failed to seek temp file: %w", err)
-	}
-
-	// Extract archive
-	if err := bm.extractArchive(tmpFile, tempDir); err != nil {
-		return "", fmt.Errorf("failed to extract archive: %w", err)
-	}
-
-	// Find bin directory in extracted files
-	binDir, err := bm.findBinDirectory(tempDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to find bin directory: %w", err)
+	if !useDebPackages {
+		fmt.Printf("  Downloading %s %s for %s from %s...\n", variant, version, platformKey, url)
+	} else {
+		fmt.Printf("  Downloading %s %s for %s from .deb packages...\n", variant, version, platformKey)
 	}
 
 	// Create cache directory
@@ -256,9 +258,64 @@ func (bm *BinaryManager) downloadForPlatform(version string, platform Platform) 
 		return "", fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	// Copy binaries to cache
-	if err := bm.copyBinaries(binDir, binPath); err != nil {
-		return "", fmt.Errorf("failed to copy binaries: %w", err)
+	// Handle .deb packages differently from tarballs
+	if useDebPackages {
+		// Download and extract .deb packages
+		if err := bm.downloadAndExtractDebPackages(debURLs, binPath); err != nil {
+			return "", fmt.Errorf("failed to download and extract .deb packages: %w", err)
+		}
+	} else {
+		// Download tarball
+		resp, err := http.Get(url)
+		if err != nil {
+			return "", fmt.Errorf("failed to download: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
+		}
+
+		// Create temp directory for extraction
+		tempDir, err := os.MkdirTemp("", fmt.Sprintf("mongodb-%s-%s-*", version, platformKey))
+		if err != nil {
+			return "", fmt.Errorf("failed to create temp directory: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		// Create temp file for archive
+		tmpFile, err := os.CreateTemp("", fmt.Sprintf("mongodb-%s-*.tgz", platformKey))
+		if err != nil {
+			return "", fmt.Errorf("failed to create temp file: %w", err)
+		}
+		defer os.Remove(tmpFile.Name())
+		defer tmpFile.Close()
+
+		// Download to temp file
+		if _, err := tmpFile.ReadFrom(resp.Body); err != nil {
+			return "", fmt.Errorf("failed to download to temp file: %w", err)
+		}
+
+		// Reset file pointer
+		if _, err := tmpFile.Seek(0, 0); err != nil {
+			return "", fmt.Errorf("failed to seek temp file: %w", err)
+		}
+
+		// Extract archive
+		if err := bm.extractArchive(tmpFile, tempDir); err != nil {
+			return "", fmt.Errorf("failed to extract archive: %w", err)
+		}
+
+		// Find bin directory in extracted files
+		binDir, err := bm.findBinDirectory(tempDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to find bin directory: %w", err)
+		}
+
+		// Copy binaries to cache
+		if err := bm.copyBinaries(binDir, binPath); err != nil {
+			return "", fmt.Errorf("failed to copy binaries: %w", err)
+		}
 	}
 
 	// Ensure shell is available in the same bin directory
@@ -281,7 +338,7 @@ func (bm *BinaryManager) downloadForPlatform(version string, platform Platform) 
 		}
 	}
 
-	fmt.Printf("  ✓ MongoDB %s for %s cached at %s\n", version, platformKey, binPath)
+	fmt.Printf("  ✓ %s %s for %s cached at %s\n", strings.Title(variant.String()), version, platformKey, binPath)
 	return binPath, nil
 }
 
@@ -456,6 +513,193 @@ func (bm *BinaryManager) constructFallbackURL(version, targetOS, mongoArch strin
 	return "", fmt.Errorf("no download URL found for MongoDB %s on %s", version, platformStr)
 }
 
+// buildPerconaURL constructs a download URL for Percona Server for MongoDB
+// [UPG-002] Percona URL format:
+// https://downloads.percona.com/downloads/percona-server-mongodb-{major.minor}/percona-server-mongodb-{version}/binary/tarball/percona-server-mongodb-{version}-{platform}-{arch}.tar.gz
+func (bm *BinaryManager) buildPerconaURL(version string, platform Platform) (string, error) {
+	// Extract major.minor version (e.g., "7.0" from "7.0.5-4")
+	versionParts := strings.Split(version, ".")
+	if len(versionParts) < 2 {
+		return "", fmt.Errorf("invalid Percona version format: %s", version)
+	}
+	majorMinor := versionParts[0] + "." + versionParts[1]
+
+	// Map Go arch to Percona arch
+	perconaArch := platform.Arch
+	if perconaArch == "amd64" {
+		perconaArch = "x86_64"
+	} else if perconaArch == "arm64" {
+		perconaArch = "aarch64"
+	}
+
+	// Validate OS - Percona only provides Linux binaries
+	if platform.OS == "darwin" {
+		return "", fmt.Errorf("Percona Server for MongoDB does not provide macOS binaries (only Linux)")
+	}
+	if platform.OS != "linux" {
+		return "", fmt.Errorf("unsupported OS for Percona: %s (only Linux is supported)", platform.OS)
+	}
+
+	// Try different URL formats based on user example:
+	// Example: https://downloads.percona.com/downloads/percona-server-mongodb-8.0/percona-server-mongodb-8.0.12-4/binary/tarball/percona-server-mongodb-8.0.12-4-x86_64.bookworm-minimal.tar.gz
+	// Format: percona-server-mongodb-{version}-{arch}.{os}-minimal.tar.gz
+
+	var urlVariants []string
+
+	// Linux OS identifiers (Debian/Ubuntu codenames, RHEL versions)
+	osIdentifiers := []string{
+		"bookworm",  // Debian 12
+		"jammy",     // Ubuntu 22.04 LTS
+		"focal",     // Ubuntu 20.04 LTS
+		"noble",     // Ubuntu 24.04 LTS
+		"bullseye",  // Debian 11
+	}
+
+	// Try OS-specific minimal variants (Linux only)
+	if platform.OS == "linux" {
+		for _, osID := range osIdentifiers {
+			url := fmt.Sprintf(
+				"https://downloads.percona.com/downloads/percona-server-mongodb-%s/percona-server-mongodb-%s/binary/tarball/percona-server-mongodb-%s-%s.%s-minimal.tar.gz",
+				majorMinor, version, version, perconaArch, osID,
+			)
+			urlVariants = append(urlVariants, url)
+		}
+
+		// Also try generic minimal (without OS)
+		genericURL := fmt.Sprintf(
+			"https://downloads.percona.com/downloads/percona-server-mongodb-%s/percona-server-mongodb-%s/binary/tarball/percona-server-mongodb-%s-%s-minimal.tar.gz",
+			majorMinor, version, version, perconaArch,
+		)
+		urlVariants = append(urlVariants, genericURL)
+	}
+
+	var lastErr error
+	for _, url := range urlVariants {
+		// Verify URL exists with HEAD request
+		resp, err := http.Head(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusFound {
+			return url, nil
+		}
+		lastErr = fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+
+	// No valid URL found for tarballs, return error
+	// The caller (downloadWithVariant) will try .deb packages as fallback
+	if lastErr != nil {
+		return "", fmt.Errorf("no valid Percona tarball URL found for version %s on %s/%s: %w", version, platform.OS, platform.Arch, lastErr)
+	}
+	return "", fmt.Errorf("no valid Percona tarball URL found for version %s on %s/%s", version, platform.OS, platform.Arch)
+}
+
+// buildPerconaDebURL constructs URLs for Percona .deb packages
+// [UPG-002] Fallback for older versions without minimal tarballs (6.0, 4.4, 4.2, 4.0, 3.6)
+// Format: http://repo.percona.com/psmdb-{major.minor}/apt/pool/main/p/percona-server-mongodb/percona-server-mongodb-{component}_{version}.{distro}_amd64.deb
+func (bm *BinaryManager) buildPerconaDebURLs(version string, platform Platform) (map[string]string, error) {
+	// Only support Linux for .deb packages
+	if platform.OS != "linux" {
+		return nil, fmt.Errorf(".deb packages only available for Linux")
+	}
+
+	// Only support amd64 for now
+	if platform.Arch != "amd64" {
+		return nil, fmt.Errorf(".deb packages only available for amd64, not %s", platform.Arch)
+	}
+
+	// Extract major.minor version
+	versionParts := strings.Split(version, ".")
+	if len(versionParts) < 2 {
+		return nil, fmt.Errorf("invalid Percona version format: %s", version)
+	}
+	majorMinor := versionParts[0] + "." + versionParts[1]
+
+	// Percona apt repo uses format without dots: psmdb-60, psmdb-44, etc.
+	repoVersion := strings.ReplaceAll(majorMinor, ".", "")
+
+	// Ubuntu/Debian distro codes to try (newest to oldest)
+	distros := []string{"noble", "jammy", "focal", "bookworm", "bullseye", "bionic", "xenial", "stretch", "buster"}
+
+	// Special handling for version 3.6 (different package structure)
+	is36 := majorMinor == "3.6"
+	packagePrefix := "percona-server-mongodb"
+	pkgDir := "percona-server-mongodb"
+
+	if is36 {
+		// 3.6 uses different directory and package naming
+		packagePrefix = "percona-server-mongodb-36"
+		pkgDir = "percona-server-mongodb-36"
+
+		// 3.6 versions need ".0" appended (e.g., "3.6.23-13" -> "3.6.23-13.0")
+		// Check if version already has the .0 suffix
+		if !strings.Contains(version, "-") || !strings.HasSuffix(version, ".0") {
+			// Parse version like "3.6.23-13" -> "3.6.23-13.0"
+			versionWithSuffix := version
+			if strings.Contains(version, "-") && !strings.HasSuffix(version, ".0") {
+				versionWithSuffix = version + ".0"
+			}
+			version = versionWithSuffix
+		}
+	}
+
+	// Base URL pattern (note: uses psmdb-60, psmdb-44, psmdb-36, etc. without dots in version)
+	baseURL := fmt.Sprintf("http://repo.percona.com/psmdb-%s/apt/pool/main/p/%s", repoVersion, pkgDir)
+
+	// Packages we need: server (mongod), mongos, and shell
+	components := []string{"server", "mongos", "shell"}
+
+	// Try each distro until we find one that works
+	for _, distro := range distros {
+		urls := make(map[string]string)
+		allFound := true
+
+		for _, component := range components {
+			var packageName string
+			if component == "shell" {
+				// Shell package naming depends on version
+				if is36 {
+					// 3.6 uses standard shell package naming
+					packageName = fmt.Sprintf("%s-shell_%s.%s_amd64.deb", packagePrefix, version, distro)
+				} else {
+					// Determine if this version uses mongosh (>= 5.0) or mongo shell (< 5.0)
+					majorVer := versionParts[0]
+					useMongosh := majorVer >= "5"
+
+					if useMongosh {
+						packageName = fmt.Sprintf("percona-mongodb-mongosh_%s.%s_amd64.deb", version, distro)
+					} else {
+						packageName = fmt.Sprintf("%s-shell_%s.%s_amd64.deb", packagePrefix, version, distro)
+					}
+				}
+			} else {
+				packageName = fmt.Sprintf("%s-%s_%s.%s_amd64.deb", packagePrefix, component, version, distro)
+			}
+
+			url := fmt.Sprintf("%s/%s", baseURL, packageName)
+
+			// Verify URL exists
+			resp, err := http.Head(url)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				allFound = false
+				break
+			}
+			resp.Body.Close()
+
+			urls[component] = url
+		}
+
+		if allFound {
+			return urls, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no valid .deb packages found for Percona %s", version)
+}
+
 // resolveVersion resolves a version string to the exact patch version
 // If user specified patch version (X.Y.Z), returns it as-is
 // If user specified minor version (X.Y), finds and returns the latest patch version
@@ -519,6 +763,164 @@ func (bm *BinaryManager) resolveVersion(version string) (string, error) {
 	}
 
 	return latestVersion.Version, nil
+}
+
+// downloadAndExtractDebPackages downloads and extracts Percona .deb packages
+// [UPG-002] Extracts binaries from .deb packages for older Percona versions
+func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string, targetBinDir string) error {
+	// Create temp directory for .deb extraction
+	tempDir, err := os.MkdirTemp("", "percona-deb-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Download and extract each .deb package
+	for component, url := range debURLs {
+		fmt.Printf("  Downloading %s from %s...\n", component, url)
+
+		// Download .deb file
+		resp, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("failed to download %s: %w", component, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to download %s: HTTP %d", component, resp.StatusCode)
+		}
+
+		// Save to temp file
+		debFile := filepath.Join(tempDir, fmt.Sprintf("%s.deb", component))
+		out, err := os.Create(debFile)
+		if err != nil {
+			return fmt.Errorf("failed to create temp file: %w", err)
+		}
+
+		_, err = io.Copy(out, resp.Body)
+		out.Close()
+		if err != nil {
+			return fmt.Errorf("failed to save .deb file: %w", err)
+		}
+
+		// Extract .deb package (ar format)
+		// .deb contains: debian-binary, control.tar.*, data.tar.*
+		// We need data.tar.* which contains the actual binaries
+		if err := bm.extractDebPackage(debFile, targetBinDir); err != nil {
+			return fmt.Errorf("failed to extract %s: %w", component, err)
+		}
+	}
+
+	return nil
+}
+
+// extractDebPackage extracts binaries from a .deb package
+func (bm *BinaryManager) extractDebPackage(debFile, targetBinDir string) error {
+	// Create temp directory for this .deb
+	tempDir, err := os.MkdirTemp("", "deb-extract-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Extract .deb using ar
+	arCmd := exec.Command("ar", "-x", debFile)
+	arCmd.Dir = tempDir
+	if output, err := arCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ar extraction failed: %w\nOutput: %s", err, output)
+	}
+
+	// Find data.tar.* file
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return fmt.Errorf("failed to read temp directory: %w", err)
+	}
+
+	var dataTar string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "data.tar") {
+			dataTar = filepath.Join(tempDir, entry.Name())
+			break
+		}
+	}
+
+	if dataTar == "" {
+		return fmt.Errorf("data.tar.* not found in .deb package")
+	}
+
+	// Extract data.tar.* and copy binaries
+	// Binaries are typically in ./usr/bin/
+	dataExtractDir := filepath.Join(tempDir, "data")
+	if err := os.MkdirAll(dataExtractDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data extract directory: %w", err)
+	}
+
+	// Open the data tar file
+	dataFile, err := os.Open(dataTar)
+	if err != nil {
+		return fmt.Errorf("failed to open data tar: %w", err)
+	}
+	defer dataFile.Close()
+
+	// Determine compression type and create appropriate reader
+	var tarReader *tar.Reader
+	if strings.HasSuffix(dataTar, ".gz") {
+		gzReader, err := gzip.NewReader(dataFile)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzReader.Close()
+		tarReader = tar.NewReader(gzReader)
+	} else if strings.HasSuffix(dataTar, ".xz") {
+		// xz compression - use external xz command
+		xzCmd := exec.Command("xz", "-dc", dataTar)
+		xzOut, err := xzCmd.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("failed to create xz pipe: %w", err)
+		}
+		if err := xzCmd.Start(); err != nil {
+			return fmt.Errorf("failed to start xz: %w", err)
+		}
+		defer xzCmd.Wait()
+		tarReader = tar.NewReader(xzOut)
+	} else {
+		tarReader = tar.NewReader(dataFile)
+	}
+
+	// Extract files from tar, looking for binaries in usr/bin/
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar: %w", err)
+		}
+
+		// Check if this is a binary we want (mongod, mongos, mongosh, or mongo)
+		if header.Typeflag == tar.TypeReg {
+			baseName := filepath.Base(header.Name)
+			if baseName == "mongod" || baseName == "mongos" || baseName == "mongosh" || baseName == "mongo" {
+				// Extract to target bin directory
+				targetPath := filepath.Join(targetBinDir, baseName)
+
+				outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+				if err != nil {
+					return fmt.Errorf("failed to create file %s: %w", targetPath, err)
+				}
+
+				if _, err := io.Copy(outFile, tarReader); err != nil {
+					outFile.Close()
+					return fmt.Errorf("failed to write file %s: %w", targetPath, err)
+				}
+				outFile.Close()
+
+				fmt.Printf("  ✓ Extracted %s\n", baseName)
+			}
+		}
+	}
+
+	return nil
 }
 
 // extractArchive extracts a tar.gz archive

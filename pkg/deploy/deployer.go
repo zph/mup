@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/monitoring"
@@ -17,6 +18,7 @@ import (
 type Deployer struct {
 	clusterName    string
 	version        string
+	variant        Variant                      // MongoDB variant
 	topology       *topology.Topology
 	executors      map[string]executor.Executor // host -> executor
 	metaDir        string                       // cluster metadata directory
@@ -32,6 +34,7 @@ type Deployer struct {
 type DeployConfig struct {
 	ClusterName        string
 	Version            string
+	Variant            Variant // MongoDB variant
 	TopologyFile       string
 	SSHUser            string
 	IdentityFile       string
@@ -56,6 +59,12 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	fmt.Println("Validating topology...")
 	if err := topo.Validate(); err != nil {
 		return nil, fmt.Errorf("topology validation failed: %w", err)
+	}
+
+	// Validate version format
+	fmt.Printf("Validating version: %s (variant: %s)...\n", cfg.Version, cfg.Variant.String())
+	if err := validateVersion(cfg.Version, cfg.Variant); err != nil {
+		return nil, fmt.Errorf("version validation failed: %w", err)
 	}
 
 	// Detect deployment mode
@@ -90,12 +99,6 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	fmt.Printf("Topology type: %s\n", topoType)
 	fmt.Printf("Total nodes: mongod=%d, mongos=%d, config=%d\n",
 		len(topo.Mongod), len(topo.Mongos), len(topo.ConfigSvr))
-
-	// Validate MongoDB version
-	fmt.Printf("MongoDB version: %s\n", cfg.Version)
-	if err := validateMongoVersion(cfg.Version); err != nil {
-		return nil, fmt.Errorf("invalid MongoDB version: %w", err)
-	}
 
 	// Executors already created above (needed for port checking)
 	fmt.Printf("Using %d executor(s)\n", len(executors))
@@ -147,6 +150,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	return &Deployer{
 		clusterName:       cfg.ClusterName,
 		version:           cfg.Version,
+		variant:           cfg.Variant,
 		topology:          topo,
 		executors:         executors,
 		metaDir:           metaDir,
@@ -201,12 +205,89 @@ func (d *Deployer) Close() error {
 	return nil
 }
 
-// validateMongoVersion validates the MongoDB version format
-func validateMongoVersion(version string) error {
-	// Simple validation - should be X.Y or X.Y.Z format
-	// TODO: Add more comprehensive version validation
+// validateVersion validates the version format based on variant
+func validateVersion(version string, variant Variant) error {
 	if version == "" {
 		return fmt.Errorf("version cannot be empty")
 	}
+
+	parts := strings.Split(version, ".")
+
+	switch variant {
+	case VariantMongo:
+		// MongoDB accepts:
+		// - "X.Y" format (e.g., "7.0")
+		// - "X.Y.Z" format (e.g., "7.0.5")
+		if len(parts) < 2 {
+			return fmt.Errorf("invalid MongoDB version format '%s': expected X.Y or X.Y.Z (e.g., '7.0' or '7.0.5')", version)
+		}
+
+		// Validate major version is numeric and >= 3
+		major := parts[0]
+		majorNum := 0
+		if _, err := fmt.Sscanf(major, "%d", &majorNum); err != nil {
+			return fmt.Errorf("invalid major version '%s': must be a number", major)
+		}
+		if majorNum < 3 {
+			return fmt.Errorf("unsupported MongoDB major version %d: minimum supported version is 3.x", majorNum)
+		}
+
+		// Validate minor version is numeric
+		minor := parts[1]
+		minorNum := 0
+		if _, err := fmt.Sscanf(minor, "%d", &minorNum); err != nil {
+			return fmt.Errorf("invalid minor version '%s': must be a number", minor)
+		}
+
+		// If patch version provided, validate it's numeric
+		if len(parts) > 2 {
+			patch := parts[2]
+			patchNum := 0
+			if _, err := fmt.Sscanf(patch, "%d", &patchNum); err != nil {
+				return fmt.Errorf("invalid patch version '%s': must be a number", patch)
+			}
+		}
+
+	case VariantPercona:
+		// Percona requires "X.Y.Z-R" format (e.g., "7.0.5-4")
+		// Where X.Y.Z is the MongoDB version and R is the Percona release
+		if !strings.Contains(version, "-") {
+			return fmt.Errorf("invalid Percona version format '%s': expected X.Y.Z-R (e.g., '7.0.5-4')", version)
+		}
+
+		versionParts := strings.Split(version, "-")
+		if len(versionParts) != 2 {
+			return fmt.Errorf("invalid Percona version format '%s': expected X.Y.Z-R", version)
+		}
+
+		// Validate MongoDB version part (X.Y.Z)
+		mongoParts := strings.Split(versionParts[0], ".")
+		if len(mongoParts) < 3 {
+			return fmt.Errorf("invalid Percona version format '%s': expected X.Y.Z-R (e.g., '7.0.5-4')", version)
+		}
+
+		// Validate major version
+		major := mongoParts[0]
+		majorNum := 0
+		if _, err := fmt.Sscanf(major, "%d", &majorNum); err != nil {
+			return fmt.Errorf("invalid major version '%s': must be a number", major)
+		}
+
+		// Check if major version is supported by Percona (3-8)
+		if majorNum < 3 || majorNum > 8 {
+			return fmt.Errorf("unsupported Percona major version %d: Percona Server for MongoDB supports versions 3.6 through 8.0", majorNum)
+		}
+
+		// Validate Percona release number
+		release := versionParts[1]
+		releaseNum := 0
+		if _, err := fmt.Sscanf(release, "%d", &releaseNum); err != nil {
+			return fmt.Errorf("invalid Percona release '%s': must be a number", release)
+		}
+
+	default:
+		return fmt.Errorf("unknown variant: %s", variant.String())
+	}
+
 	return nil
 }

@@ -38,6 +38,7 @@ func (d *Deployer) finalize(ctx context.Context) error {
 type ClusterMetadata struct {
 	Name              string                   `yaml:"name"`
 	Version           string                   `yaml:"version"`
+	Variant           string                   `yaml:"variant"`      // MongoDB variant: "mongo" or "percona"
 	BinPath           string                   `yaml:"bin_path"`     // Path to MongoDB binaries
 	CreatedAt         time.Time                `yaml:"created_at"`
 	Status            string                   `yaml:"status"`
@@ -88,6 +89,7 @@ func (d *Deployer) saveMetadata(ctx context.Context) error {
 	metadata := ClusterMetadata{
 		Name:              d.clusterName,
 		Version:           d.version,
+		Variant:           d.variant.String(),
 		BinPath:           d.binPath,
 		CreatedAt:         time.Now(),
 		Status:            "running",
@@ -217,6 +219,7 @@ func (d *Deployer) displayClusterInfo() {
 	fmt.Println("Cluster Deployed Successfully!")
 	fmt.Println(repeatString("=", 60))
 	fmt.Printf("Cluster name:    %s\n", d.clusterName)
+	fmt.Printf("MongoDB variant: %s\n", d.variant.String())
 	fmt.Printf("MongoDB version: %s\n", d.version)
 	fmt.Printf("Topology type:   %s\n", d.topology.GetTopologyType())
 	fmt.Printf("Deploy mode:     %s\n", func() string {

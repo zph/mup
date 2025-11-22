@@ -466,6 +466,10 @@ func TestBinaryManager_extractArchive(t *testing.T) {
 }
 
 func TestBinaryManager_downloadForPlatform_Cached(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
 	bm, tempDir := newTestBinaryManager(t)
 	defer os.RemoveAll(tempDir)
 
@@ -496,6 +500,10 @@ func TestBinaryManager_downloadForPlatform_Cached(t *testing.T) {
 }
 
 func TestBinaryManager_GetBinPathForPlatform_Cache(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
 	bm, tempDir := newTestBinaryManager(t)
 	defer os.RemoveAll(tempDir)
 

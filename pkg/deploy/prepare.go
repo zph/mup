@@ -237,7 +237,7 @@ func (d *Deployer) getPortsForHost(host string) []int {
 
 // prepareBinaries ensures MongoDB binaries are available for all required platforms
 func (d *Deployer) prepareBinaries(ctx context.Context) error {
-	fmt.Println("Preparing MongoDB binaries...")
+	fmt.Printf("Preparing MongoDB binaries (variant: %s, version: %s)...\n", d.variant.String(), d.version)
 
 	// Create binary manager
 	bm, err := NewBinaryManager()
@@ -270,10 +270,10 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 		wg.Add(1)
 		go func(p Platform) {
 			defer wg.Done()
-			binPath, err := bm.GetBinPathForPlatform(d.version, p)
+			binPath, err := bm.GetBinPathWithVariant(d.version, d.variant, p)
 			if err != nil {
 				// Log error but continue with other platforms
-				fmt.Printf("  Warning: failed to get binaries for %s: %v\n", p.Key(), err)
+				fmt.Printf("  Warning: failed to get binaries for %s %s: %v\n", d.variant, p.Key(), err)
 				return
 			}
 
@@ -295,22 +295,27 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 			d.binPath = binPath
 		} else {
 			// If not found, try to fetch it
-			binPath, err := bm.GetBinPathForPlatform(d.version, currentPlatform)
+			binPath, err := bm.GetBinPathWithVariant(d.version, d.variant, currentPlatform)
 			if err != nil {
+				// Check if this is Percona on macOS - not supported
+				if d.variant == VariantPercona && runtime.GOOS == "darwin" {
+					return fmt.Errorf("Percona Server for MongoDB does not provide macOS binaries. Please use:\n  - Official MongoDB (--variant mongo) on macOS, or\n  - Deploy to a Linux host for Percona support")
+				}
+
 				// On macOS arm64, fall back to x86_64 (Rosetta 2 compatibility)
 				if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-					fmt.Printf("  Note: MongoDB %s not available for arm64, falling back to x86_64 (Rosetta 2)\n", d.version)
+					fmt.Printf("  Note: %s %s not available for arm64, falling back to x86_64 (Rosetta 2)\n", d.variant.String(), d.version)
 					fallbackPlatform := Platform{
 						OS:   "darwin",
 						Arch: "amd64",
 					}
-					binPath, err = bm.GetBinPathForPlatform(d.version, fallbackPlatform)
+					binPath, err = bm.GetBinPathWithVariant(d.version, d.variant, fallbackPlatform)
 					if err != nil {
-						return fmt.Errorf("failed to ensure MongoDB %s for current platform (tried arm64 and x86_64 fallback): %w", d.version, err)
+						return fmt.Errorf("failed to ensure %s %s for current platform (tried arm64 and x86_64 fallback): %w", d.variant.String(), d.version, err)
 					}
 					d.binPath = binPath
 				} else {
-					return fmt.Errorf("failed to ensure MongoDB %s for current platform: %w", d.version, err)
+					return fmt.Errorf("failed to ensure %s %s for current platform: %w", d.variant.String(), d.version, err)
 				}
 			} else {
 				d.binPath = binPath

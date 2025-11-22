@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,7 +15,8 @@ import (
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
 	Name              string               `yaml:"name"`
-	Version           string               `yaml:"version"`
+	Version           string               `yaml:"version"` // Version number (e.g., "6.0.15", "7.0.0")
+	Variant           string               `yaml:"variant"` // [UPG-002] Variant: "mongo" (default) or "percona"
 	BinPath           string               `yaml:"bin_path"`     // Path to MongoDB binaries
 	CreatedAt         time.Time            `yaml:"created_at"`
 	Status            string               `yaml:"status"`
@@ -30,6 +32,35 @@ type ClusterMetadata struct {
 
 	// Monitoring fields
 	Monitoring *MonitoringMetadata `yaml:"monitoring,omitempty"`
+}
+
+// GetFullVersion returns the full version string including variant
+// Format: variant-version (e.g., "mongo-6.0.15", "percona-7.0.0")
+func (cm *ClusterMetadata) GetFullVersion() string {
+	variant := cm.Variant
+	if variant == "" {
+		variant = "mongo" // Default to mongo if not specified
+	}
+	return fmt.Sprintf("%s-%s", variant, cm.Version)
+}
+
+// SetFullVersion sets both variant and version from a full version string
+// Format: variant-version (e.g., "mongo-6.0.15", "percona-7.0.0")
+func (cm *ClusterMetadata) SetFullVersion(fullVersion string) error {
+	parts := strings.SplitN(fullVersion, "-", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid full version format: %s (expected variant-version)", fullVersion)
+	}
+	variant := parts[0]
+	version := parts[1]
+
+	if variant != "mongo" && variant != "percona" {
+		return fmt.Errorf("unknown variant: %s (expected 'mongo' or 'percona')", variant)
+	}
+
+	cm.Variant = variant
+	cm.Version = version
+	return nil
 }
 
 // MonitoringMetadata tracks monitoring infrastructure state

@@ -15,6 +15,7 @@ import (
 
 var (
 	clusterDeployVersion      string
+	clusterDeployVariant      string
 	clusterDeployUser         string
 	clusterDeployIdentityFile string
 	clusterDeployYes          bool
@@ -64,6 +65,9 @@ Examples:
 
   # Deploy with specific MongoDB version
   mup cluster deploy test-rs replica-set.yaml --version 7.0.5
+
+  # Deploy with Percona Server for MongoDB
+  mup cluster deploy my-rs replica-set.yaml --variant percona --version 8.0.12-4
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -73,10 +77,17 @@ Examples:
 		ctx, cancel := context.WithTimeout(context.Background(), clusterDeployTimeout)
 		defer cancel()
 
+		// Parse variant
+		variant, err := deploy.ParseVariant(clusterDeployVariant)
+		if err != nil {
+			return fmt.Errorf("invalid variant: %w", err)
+		}
+
 		// Create deployer
 		cfg := deploy.DeployConfig{
 			ClusterName:       clusterName,
 			Version:           clusterDeployVersion,
+			Variant:           variant,
 			TopologyFile:      topologyFile,
 			SSHUser:           clusterDeployUser,
 			IdentityFile:      clusterDeployIdentityFile,
@@ -291,6 +302,7 @@ func init() {
 
 	// Deploy command flags
 	clusterDeployCmd.Flags().StringVarP(&clusterDeployVersion, "version", "v", "7.0", "MongoDB version to deploy")
+	clusterDeployCmd.Flags().StringVar(&clusterDeployVariant, "variant", "mongo", "MongoDB variant: 'mongo' (official) or 'percona' (Percona Server for MongoDB)")
 	clusterDeployCmd.Flags().StringVar(&clusterDeployUser, "user", "", "SSH user (default: from topology file)")
 	clusterDeployCmd.Flags().StringVar(&clusterDeployIdentityFile, "identity-file", "", "SSH private key path")
 	clusterDeployCmd.Flags().BoolVar(&clusterDeployYes, "yes", false, "Skip confirmation prompts")

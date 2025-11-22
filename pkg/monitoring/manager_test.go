@@ -235,8 +235,9 @@ func TestCreateGrafanaProvisioning(t *testing.T) {
 		t.Error("datasource config missing VictoriaMetrics")
 	}
 
-	if !containsString(datasourceStr, "http://localhost:8428") {
-		t.Error("datasource config missing victoria metrics URL")
+	// The code replaces localhost with host.docker.internal for Docker container access
+	if !containsString(datasourceStr, "http://host.docker.internal:8428") {
+		t.Errorf("datasource config missing victoria metrics URL, got:\n%s", datasourceStr)
 	}
 }
 
