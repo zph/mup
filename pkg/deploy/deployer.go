@@ -30,8 +30,31 @@ type Deployer struct {
 	monitoringEnabled bool                      // Whether monitoring is enabled
 }
 
+// NewConfigRegenerator creates a minimal Deployer for config file regeneration during upgrades
+// This is used by the upgrade package to regenerate configs for the new version
+func NewConfigRegenerator(clusterName, version string, variant Variant, topo *topology.Topology, metaDir, binPath string) (*Deployer, error) {
+	tmplMgr, err := template.NewManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create template manager: %w", err)
+	}
+
+	localExec := executor.NewLocalExecutor()
+
+	return &Deployer{
+		clusterName: clusterName,
+		version:     version,
+		variant:     variant,
+		topology:    topo,
+		executors:   map[string]executor.Executor{"localhost": localExec},
+		metaDir:     metaDir,
+		isLocal:     true,
+		binPath:     binPath,
+		templateMgr: tmplMgr,
+	}, nil
+}
+
 // DeployConfig contains deployment configuration
-type DeployConfig struct {
+type DeployConfig struct{
 	ClusterName        string
 	Version            string
 	Variant            Variant // MongoDB variant

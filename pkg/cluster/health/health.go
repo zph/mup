@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
@@ -187,6 +192,17 @@ func (c *Checker) checkNode(ctx context.Context, node meta.NodeMetadata) NodeHea
 		health.Status = portStatus
 	}
 
+	// Check 3: Get MongoDB version (if node is running)
+	if health.Status == "running" {
+		version, err := c.getMongoDBVersion(ctx, node.Host, node.Port)
+		if err == nil {
+			health.Version = version
+		} else {
+			// Version check failed, but node is running - just don't show version
+			health.Version = "unknown"
+		}
+	}
+
 	return health
 }
 
@@ -266,6 +282,7 @@ type NodeHealth struct {
 	SupervisorStatus string // Supervisor state if available
 	PID              int
 	Uptime           time.Duration
+	Version          string        // MongoDB binary version
 }
 
 // PortMapping contains all ports used by the cluster
@@ -304,4 +321,48 @@ type ExporterHealth struct {
 	Host   string
 	Port   int
 	Status string
+}
+
+// getMongoDBVersion connects to a MongoDB node and retrieves its version
+func (c *Checker) getMongoDBVersion(ctx context.Context, host string, port int) (string, error) {
+	// Create connection URI
+	uri := fmt.Sprintf("mongodb://%s:%d", host, port)
+
+	// Create client options with short timeout
+	clientOpts := options.Client().
+		ApplyURI(uri).
+		SetConnectTimeout(2 * time.Second).
+		SetServerSelectionTimeout(2 * time.Second).
+		SetDirect(true) // Direct connection to this specific node
+
+	// Connect to MongoDB
+	client, err := mongo.Connect(ctx, clientOpts)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect: %w", err)
+	}
+	defer client.Disconnect(ctx)
+
+	// Create a short timeout context for the query
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	// Get admin database
+	adminDB := client.Database("admin")
+
+	// Run buildInfo command to get version
+	var result bson.M
+	err = adminDB.RunCommand(queryCtx, bson.D{{Key: "buildInfo", Value: 1}}).Decode(&result)
+	if err != nil {
+		return "", fmt.Errorf("failed to get build info: %w", err)
+	}
+
+	// Extract version from result
+	version, ok := result["version"].(string)
+	if !ok {
+		return "", fmt.Errorf("version not found in buildInfo response")
+	}
+
+	// Clean up version (remove any suffixes like -rc1, etc. for display)
+	// but keep them if they're there
+	return strings.TrimSpace(version), nil
 }

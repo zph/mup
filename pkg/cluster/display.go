@@ -158,6 +158,9 @@ func (m *Manager) displayNodeHealth(node health.NodeHealth) {
 
 	// Build status line
 	statusLine := fmt.Sprintf("%s %s", statusIcon, node.Status)
+	if node.Version != "" && node.Version != "unknown" {
+		statusLine += fmt.Sprintf(" v%s", node.Version)
+	}
 	if node.Uptime > 0 {
 		statusLine += fmt.Sprintf(" (uptime: %s)", formatDuration(node.Uptime))
 	}

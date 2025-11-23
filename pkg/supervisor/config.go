@@ -2,8 +2,10 @@ package supervisor
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"runtime"
 	"text/template"
 
 	"github.com/zph/mup/pkg/topology"
@@ -11,17 +13,23 @@ import (
 
 // ConfigGenerator generates supervisord configuration files for a cluster
 type ConfigGenerator struct {
-	clusterDir  string
-	clusterName string
-	topology    *topology.Topology
-	version     string
-	binPath     string
+	clusterDir    string // Version-specific directory (e.g., ~/.mup/storage/clusters/test/v7.0)
+	clusterRoot   string // Cluster root directory (e.g., ~/.mup/storage/clusters/test)
+	clusterName   string
+	topology      *topology.Topology
+	version       string
+	binPath       string
 }
 
 // NewConfigGenerator creates a new config generator
 func NewConfigGenerator(clusterDir, clusterName string, topo *topology.Topology, version, binPath string) *ConfigGenerator {
+	// clusterDir is the version-specific directory (e.g., ~/.mup/storage/clusters/test/v7.0)
+	// clusterRoot is the parent directory (e.g., ~/.mup/storage/clusters/test)
+	clusterRoot := filepath.Dir(clusterDir)
+
 	return &ConfigGenerator{
 		clusterDir:  clusterDir,
+		clusterRoot: clusterRoot,
 		clusterName: clusterName,
 		topology:    topo,
 		version:     version,
@@ -36,6 +44,11 @@ func (g *ConfigGenerator) GenerateAll() error {
 	// Generate single supervisor.ini with all programs included directly
 	if err := g.GenerateUnifiedConfig(); err != nil {
 		return fmt.Errorf("failed to generate unified config: %w", err)
+	}
+
+	// Generate convenience wrapper scripts
+	if err := g.GenerateWrapperScripts(); err != nil {
+		return fmt.Errorf("failed to generate wrapper scripts: %w", err)
 	}
 
 	return nil
@@ -58,9 +71,12 @@ func (g *ConfigGenerator) GenerateUnifiedConfig() error {
 	fmt.Fprintf(file, "nodaemon = false\n")
 	fmt.Fprintf(file, "identifier = %s\n\n", g.clusterName)
 
-	// Write HTTP server section
+	// Write HTTP server section with unique port per cluster
+	// Use hash of cluster name to generate a port in range 19000-19999
+	// This avoids conflicts when running multiple clusters
+	httpPort := g.getSupervisorHTTPPort()
 	fmt.Fprintf(file, "[inet_http_server]\n")
-	fmt.Fprintf(file, "port = 127.0.0.1:9001\n\n")
+	fmt.Fprintf(file, "port = 127.0.0.1:%d\n\n", httpPort)
 
 	// Write all config server programs
 	for _, node := range g.topology.ConfigSvr {
@@ -94,9 +110,12 @@ func (g *ConfigGenerator) GenerateUnifiedConfig() error {
 // writeMongodProgram writes a mongod program section to the config file
 func (g *ConfigGenerator) writeMongodProgram(file *os.File, host string, port int, replicaSet string, isConfigSvr bool) error {
 	programName := fmt.Sprintf("mongod-%d", port)
-	configPath := filepath.Join(g.clusterDir, "conf", fmt.Sprintf("%s-%d", host, port), "mongod.conf")
-	dataDir := filepath.Join(g.clusterDir, "data", fmt.Sprintf("%s-%d", host, port))
-	logFile := filepath.Join(g.clusterDir, "logs", fmt.Sprintf("supervisor-mongod-%d.log", port))
+	// Per-process directory structure: mongod-{port}/{config,log,bin}
+	processDir := filepath.Join(g.clusterDir, programName)
+	configPath := filepath.Join(processDir, "config", "mongod.conf")
+	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongod-%d.log", port))
+	// Data is version-independent (in clusterRoot/data/, NOT clusterDir/data/)
+	dataDir := filepath.Join(g.clusterRoot, "data", fmt.Sprintf("%s-%d", host, port))
 	mongodPath := filepath.Join(g.binPath, "mongod")
 
 	fmt.Fprintf(file, "[program:%s]\n", programName)
@@ -124,8 +143,10 @@ func (g *ConfigGenerator) writeMongodProgram(file *os.File, host string, port in
 // writeMongosProgram writes a mongos program section to the config file
 func (g *ConfigGenerator) writeMongosProgram(file *os.File, host string, port int) error {
 	programName := fmt.Sprintf("mongos-%d", port)
-	configPath := filepath.Join(g.clusterDir, "conf", fmt.Sprintf("%s-%d", host, port), "mongos.conf")
-	logFile := filepath.Join(g.clusterDir, "logs", fmt.Sprintf("supervisor-mongos-%d.log", port))
+	// Per-process directory structure: mongos-{port}/{config,log,bin}
+	processDir := filepath.Join(g.clusterDir, programName)
+	configPath := filepath.Join(processDir, "config", "mongos.conf")
+	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongos-%d.log", port))
 	mongosPath := filepath.Join(g.binPath, "mongos")
 
 	fmt.Fprintf(file, "[program:%s]\n", programName)
@@ -144,6 +165,21 @@ func (g *ConfigGenerator) writeMongosProgram(file *os.File, host string, port in
 	fmt.Fprintf(file, "\n")
 
 	return nil
+}
+
+// getSupervisorHTTPPort generates a unique HTTP port for this cluster's supervisor
+// Uses hash of cluster directory (includes version) to get a port in range 19000-19999
+// This ensures old and new supervisors can run side-by-side during upgrades
+func (g *ConfigGenerator) getSupervisorHTTPPort() int {
+	h := fnv.New32a()
+	// Hash the full cluster directory path (includes version like "v7.0")
+	// This gives different ports for different versions of the same cluster
+	h.Write([]byte(g.clusterDir))
+	hash := h.Sum32()
+
+	// Map to port range 19000-19999 (1000 ports available)
+	port := 19000 + int(hash%1000)
+	return port
 }
 
 // GenerateMainConfig generates the main supervisor.ini file
@@ -329,3 +365,135 @@ stopwaitsecs = 30
 stopsignal = INT
 environment = HOME="{{.HomeDir}}",USER="{{.User}}"
 `
+
+// GenerateWrapperScripts generates convenience start/stop scripts in per-process directories
+func (g *ConfigGenerator) GenerateWrapperScripts() error {
+	// Get supervisor binary path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+	supervisorBin := filepath.Join(homeDir, ".mup", "storage", "bin", "supervisor", "v1.0.0",
+		fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH), "supervisord")
+
+	configPath := filepath.Join(g.clusterDir, "supervisor.ini")
+	httpPort := g.getSupervisorHTTPPort()
+	serverURL := fmt.Sprintf("http://localhost:%d", httpPort)
+
+	// Generate per-node scripts for mongod
+	for _, node := range g.topology.Mongod {
+		programName := fmt.Sprintf("mongod-%d", node.Port)
+		processDir := filepath.Join(g.clusterDir, programName)
+		binDir := filepath.Join(processDir, "bin")
+
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			return fmt.Errorf("failed to create bin dir for %s: %w", programName, err)
+		}
+
+		if err := g.generateProcessScripts(binDir, programName, supervisorBin, configPath, serverURL); err != nil {
+			return fmt.Errorf("failed to generate scripts for %s: %w", programName, err)
+		}
+	}
+
+	// Generate per-node scripts for config servers
+	for _, node := range g.topology.ConfigSvr {
+		programName := fmt.Sprintf("mongod-%d", node.Port)
+		processDir := filepath.Join(g.clusterDir, programName)
+		binDir := filepath.Join(processDir, "bin")
+
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			return fmt.Errorf("failed to create bin dir for %s: %w", programName, err)
+		}
+
+		if err := g.generateProcessScripts(binDir, programName, supervisorBin, configPath, serverURL); err != nil {
+			return fmt.Errorf("failed to generate scripts for %s: %w", programName, err)
+		}
+	}
+
+	// Generate per-node scripts for mongos
+	for _, node := range g.topology.Mongos {
+		programName := fmt.Sprintf("mongos-%d", node.Port)
+		processDir := filepath.Join(g.clusterDir, programName)
+		binDir := filepath.Join(processDir, "bin")
+
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			return fmt.Errorf("failed to create bin dir for %s: %w", programName, err)
+		}
+
+		if err := g.generateProcessScripts(binDir, programName, supervisorBin, configPath, serverURL); err != nil {
+			return fmt.Errorf("failed to generate scripts for %s: %w", programName, err)
+		}
+	}
+
+	return nil
+}
+
+// generateProcessScripts generates start/stop/status scripts for a single process
+func (g *ConfigGenerator) generateProcessScripts(binDir, programName, supervisorBin, configPath, serverURL string) error {
+	pidFile := filepath.Join(g.clusterDir, "supervisor.pid")
+
+	// Generate start script
+	startScript := fmt.Sprintf(`#!/bin/bash
+# Auto-generated wrapper script for starting %s
+set -e
+
+SUPERVISOR_BIN="%s"
+SUPERVISOR_CONFIG="%s"
+SUPERVISOR_PID="%s"
+SERVER_URL="%s"
+
+# Check if supervisor is running
+if [ -f "$SUPERVISOR_PID" ] && kill -0 $(cat "$SUPERVISOR_PID" 2>/dev/null) 2>/dev/null; then
+    echo "Supervisor already running"
+else
+    echo "Starting supervisor daemon..."
+    "$SUPERVISOR_BIN" -c "$SUPERVISOR_CONFIG"
+    sleep 1
+fi
+
+echo "Starting %s..."
+"$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" start %s
+"$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" status %s
+`, programName, supervisorBin, configPath, pidFile, serverURL, programName, programName, programName)
+
+	startPath := filepath.Join(binDir, "start")
+	if err := os.WriteFile(startPath, []byte(startScript), 0755); err != nil {
+		return fmt.Errorf("failed to write start script: %w", err)
+	}
+
+	// Generate stop script
+	stopScript := fmt.Sprintf(`#!/bin/bash
+# Auto-generated wrapper script for stopping %s
+set -e
+
+SUPERVISOR_BIN="%s"
+SUPERVISOR_CONFIG="%s"
+SERVER_URL="%s"
+
+echo "Stopping %s..."
+"$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" stop %s
+"$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" status %s
+`, programName, supervisorBin, configPath, serverURL, programName, programName, programName)
+
+	stopPath := filepath.Join(binDir, "stop")
+	if err := os.WriteFile(stopPath, []byte(stopScript), 0755); err != nil {
+		return fmt.Errorf("failed to write stop script: %w", err)
+	}
+
+	// Generate status script
+	statusScript := fmt.Sprintf(`#!/bin/bash
+# Auto-generated wrapper script for checking %s status
+SUPERVISOR_BIN="%s"
+SUPERVISOR_CONFIG="%s"
+SERVER_URL="%s"
+
+"$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" status %s
+`, programName, supervisorBin, configPath, serverURL, programName)
+
+	statusPath := filepath.Join(binDir, "status")
+	if err := os.WriteFile(statusPath, []byte(statusScript), 0755); err != nil {
+		return fmt.Errorf("failed to write status script: %w", err)
+	}
+
+	return nil
+}

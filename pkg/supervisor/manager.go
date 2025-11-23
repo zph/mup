@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ type Manager struct {
 	clusterName string
 	configPath  string
 	binaryPath  string // Path to supervisord binary
+	httpPort    int    // HTTP server port for this cluster
 }
 
 // ProcessStatus represents the state of a supervised process
@@ -45,24 +47,63 @@ func NewManager(clusterDir, clusterName string) (*Manager, error) {
 		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
 	}
 
+	// Calculate HTTP port for this cluster (same logic as ConfigGenerator)
+	// Use clusterDir (which includes version) to allow multiple supervisors during upgrade
+	httpPort := getSupervisorHTTPPort(clusterDir)
+
 	return &Manager{
 		clusterDir:  clusterDir,
 		clusterName: clusterName,
 		configPath:  configPath,
 		binaryPath:  binaryPath,
+		httpPort:    httpPort,
 	}, nil
 }
 
 // LoadManager loads an existing supervisord manager
+// clusterDir can be either:
+// - A version-specific directory (e.g., ~/.mup/storage/clusters/test/v7.0)
+// - A cluster root directory (e.g., ~/.mup/storage/clusters/test) - will use "current" symlink
 func LoadManager(clusterDir, clusterName string) (*Manager, error) {
-	mgr, err := NewManager(clusterDir, clusterName)
-	if err != nil {
-		return nil, err
+	// Check if clusterDir has a supervisor.ini - if not, try "current" symlink
+	configPath := filepath.Join(clusterDir, "supervisor.ini")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Try using "current" symlink
+		currentDir := filepath.Join(clusterDir, "current")
+		if _, err := os.Stat(filepath.Join(currentDir, "supervisor.ini")); err == nil {
+			clusterDir = currentDir
+			configPath = filepath.Join(currentDir, "supervisor.ini")
+		} else {
+			return nil, fmt.Errorf("supervisor config not found at %s or %s/current/supervisor.ini",
+				configPath, clusterDir)
+		}
 	}
 
-	// Verify config exists
-	if _, err := os.Stat(mgr.configPath); err != nil {
-		return nil, fmt.Errorf("supervisor config not found at %s: %w", mgr.configPath, err)
+	// Read the port from the existing config file (for backwards compatibility)
+	// This handles cases where the config was generated with old port calculation
+	httpPort, err := readPortFromConfig(configPath)
+	if err != nil {
+		// If we can't read the port, fall back to calculating it
+		httpPort = getSupervisorHTTPPort(clusterDir)
+	}
+
+	// Get supervisord binary path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
+	binaryPath, err := GetSupervisordBinary(cacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
+	}
+
+	mgr := &Manager{
+		clusterDir:  clusterDir,
+		clusterName: clusterName,
+		configPath:  configPath,
+		binaryPath:  binaryPath,
+		httpPort:    httpPort,
 	}
 
 	return mgr, nil
@@ -126,8 +167,10 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // ctl runs a supervisord ctl command
 func (m *Manager) ctl(args ...string) *exec.Cmd {
-	// Use: supervisord ctl -c config.ini <command>
-	ctlArgs := append([]string{"ctl", "-c", m.configPath}, args...)
+	// Use: supervisord ctl -c config.ini -s http://localhost:PORT <command>
+	// The -s flag is required to specify the HTTP server address when using custom ports
+	serverURL := fmt.Sprintf("http://localhost:%d", m.httpPort)
+	ctlArgs := append([]string{"ctl", "-c", m.configPath, "-s", serverURL}, args...)
 	return exec.Command(m.binaryPath, ctlArgs...)
 }
 
@@ -155,7 +198,51 @@ func (m *Manager) Stop(ctx context.Context) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("supervisord did not stop within 30 seconds")
+	// If graceful shutdown failed, try force kill
+	fmt.Printf("  ⚠️  Graceful shutdown timed out, attempting force kill...\n")
+	if err := m.ForceKill(); err != nil {
+		return fmt.Errorf("supervisord did not stop within 30 seconds and force kill failed: %w", err)
+	}
+
+	fmt.Printf("  ✓ Supervisor daemon stopped (force killed)\n")
+	return nil
+}
+
+// ForceKill forcefully kills the supervisord process using SIGKILL
+func (m *Manager) ForceKill() error {
+	pidFile := filepath.Join(m.clusterDir, "supervisor.pid")
+
+	// Read PID
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	var pid int
+	if _, err := fmt.Sscanf(string(pidBytes), "%d", &pid); err != nil {
+		return fmt.Errorf("failed to parse PID: %w", err)
+	}
+
+	// Find process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+
+	// Send SIGKILL
+	if err := process.Kill(); err != nil {
+		return fmt.Errorf("failed to kill process: %w", err)
+	}
+
+	// Wait a bit for process to die
+	time.Sleep(1 * time.Second)
+
+	// Verify it's dead
+	if m.IsRunning() {
+		return fmt.Errorf("process still running after kill")
+	}
+
+	return nil
 }
 
 // StartProcess starts a specific process
@@ -362,4 +449,43 @@ func (m *Manager) Reload() error {
 	}
 
 	return nil
+}
+
+// readPortFromConfig reads the HTTP port from an existing supervisor.ini file
+func readPortFromConfig(configPath string) (int, error) {
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	// Look for line like: port = 127.0.0.1:19639
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "port = 127.0.0.1:") {
+			portStr := strings.TrimPrefix(line, "port = 127.0.0.1:")
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse port from config: %w", err)
+			}
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("port not found in config")
+}
+
+// getSupervisorHTTPPort generates a unique HTTP port for this cluster's supervisor
+// Uses hash of cluster directory (includes version) to get a port in range 19000-19999
+// This must match the logic in ConfigGenerator.getSupervisorHTTPPort()
+// Using clusterDir instead of clusterName allows multiple supervisors (different versions)
+// to run side-by-side during upgrades
+func getSupervisorHTTPPort(clusterDir string) int {
+	h := fnv.New32a()
+	h.Write([]byte(clusterDir))
+	hash := h.Sum32()
+
+	// Map to port range 19000-19999 (1000 ports available)
+	port := 19000 + int(hash%1000)
+	return port
 }

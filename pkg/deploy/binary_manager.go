@@ -229,7 +229,40 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 	case VariantMongo:
 		url, err = bm.getDownloadURLForPlatform(version, platform)
 		if err != nil {
-			return "", fmt.Errorf("failed to get download URL: %w", err)
+			// For Apple Silicon, fall back to x86_64 (runs via Rosetta)
+			if platform.OS == "darwin" && platform.Arch == "arm64" {
+				fmt.Printf("  ⚠️  ARM64 binaries not available for MongoDB %s\n", version)
+				fmt.Printf("  Falling back to x86_64 (will run via Rosetta)\n")
+
+				// Retry with x86_64
+				fallbackPlatform := Platform{OS: "darwin", Arch: "amd64"}
+				url, err = bm.getDownloadURLForPlatform(version, fallbackPlatform)
+				if err != nil {
+					return "", fmt.Errorf("failed to get download URL (tried arm64 and x86_64): %w", err)
+				}
+
+				// Update platform for rest of download process
+				platform = fallbackPlatform
+				// Recalculate cache directory with fallback platform
+				platformKey = platform.Key()
+				fullVersion := fmt.Sprintf("%s-%s", variant, version)
+				cacheDir = filepath.Join(bm.cacheDir, fmt.Sprintf("%s-%s", fullVersion, platformKey))
+				binPath = filepath.Join(cacheDir, "bin")
+
+				// Re-check cache for fallback platform
+				if _, err := os.Stat(binPath); err == nil {
+					mongodPath := filepath.Join(binPath, "mongod")
+					if platform.OS == "windows" {
+						mongodPath = filepath.Join(binPath, "mongod.exe")
+					}
+					if _, err := os.Stat(mongodPath); err == nil {
+						fmt.Printf("  ✓ MongoDB %s for %s (x86_64) already cached at %s\n", version, platformKey, binPath)
+						return binPath, nil
+					}
+				}
+			} else {
+				return "", fmt.Errorf("failed to get download URL: %w", err)
+			}
 		}
 	case VariantPercona:
 		// Try tarball first

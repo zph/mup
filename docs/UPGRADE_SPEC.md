@@ -351,30 +351,73 @@ safety_hooks:
 
 ---
 
-### UPG-011: Upgrade Progress Tracking
+### UPG-011: Upgrade Progress Tracking and Checkpointing
 **EARS-ID**: UPG-011
 **Type**: Ubiquitous
-**Requirement**: The system **shall** persist upgrade state after each phase completion to enable resume capability after failures.
+**Requirement**: The system **shall** persist upgrade state after each node operation with checkpointing to enable precise resume capability after failures or interruptions.
 
-**Progress State**:
-- Current phase (pre-flight, config, shard-N, mongos, post-upgrade)
-- Nodes upgraded (list of host:port)
-- Nodes pending (list of host:port)
-- Previous version
-- Target version
-- Timestamp of last phase completion
+**Node-Level State Tracking**:
+Each node in the upgrade shall maintain:
+- **Status**: One of `pending`, `in_progress`, `completed`, `failed`, `rolled_back`
+- **Host:Port**: Node identifier
+- **Start Timestamp**: When upgrade began for this node
+- **Completion Timestamp**: When upgrade finished (success or failure)
+- **Previous Version**: Version before upgrade
+- **Target Version**: Version being upgraded to
+- **Error Details**: Error message if status is `failed`
+- **Retry Count**: Number of retry attempts for this node
+
+**Phase-Level State Tracking**:
+- **Current Phase**: One of `pre-flight`, `config-servers`, `shard-N`, `mongos`, `post-upgrade`
+- **Phase Status**: One of `not_started`, `in_progress`, `completed`, `failed`
+- **Nodes in Phase**: List of nodes being upgraded in this phase
+- **Phase Start Timestamp**: When phase began
+- **Last Checkpoint Timestamp**: When state was last persisted
+
+**Global Upgrade State**:
+- **Upgrade ID**: Unique identifier for this upgrade operation
+- **Previous Version**: Full version before upgrade (e.g., "mongo-6.0.15")
+- **Target Version**: Full version being upgraded to (e.g., "mongo-7.0.0")
+- **Upgrade Started At**: Initial timestamp
+- **Last Updated At**: Most recent state update
+- **Overall Status**: One of `in_progress`, `completed`, `failed`, `rolled_back`, `paused`
+
+**Checkpoint Mechanism**:
+The system shall create checkpoints:
+1. **After each node upgrade completes** (success or failure)
+2. **Before each critical operation** (primary stepdown, FCV change, balancer toggle)
+3. **After each phase completes**
+4. **On user-initiated pause** [UPG-016]
+
+Checkpoint data shall be persisted to `~/.mup/storage/clusters/<cluster-name>/upgrade-state.yaml`
 
 **Resume Capability**:
-- Detect incomplete upgrade on cluster start
-- Offer to resume or rollback
-- Skip already-completed phases
-- Re-validate health before resuming
+When resuming an incomplete upgrade, the system shall:
+1. Load checkpoint state from upgrade-state.yaml
+2. Detect last successful operation
+3. Offer options to user:
+   - **Resume**: Continue from last checkpoint
+   - **Rollback**: Revert all changes [UPG-015]
+   - **Abort**: Exit without changes
+4. Re-validate cluster health before resuming
+5. Skip nodes with status `completed`
+6. Retry nodes with status `failed` (respecting retry limits)
+7. Resume nodes with status `in_progress` (re-validate first)
+
+**State Cleanup**:
+- Upgrade state is archived (not deleted) on successful completion
+- Archived states stored in `~/.mup/storage/clusters/<cluster-name>/upgrade-history/`
+- Failed upgrade states retained until explicit rollback or retry
 
 **Acceptance Criteria**:
-- Upgrade state is saved in cluster metadata
-- Failed upgrades can be resumed from last successful phase
-- User can choose to rollback instead of resume
-- Completed upgrades clear progress state
+- Upgrade state persisted after each node operation (not just phases)
+- Checkpoint timestamps accurate to the second
+- Failed upgrades can be resumed from exact node where failure occurred
+- User can choose resume, rollback, or abort options
+- State file includes all information needed to resume
+- Completed upgrades archived with timestamp
+- State file format is human-readable YAML
+- State transitions are atomic (write to temp file, then rename)
 
 **EARS Tags**: [UPG-011]
 
@@ -424,7 +467,10 @@ mup cluster upgrade <cluster-name> --to-version <version> [flags]
 - `--variant <variant>`: Target variant (default: "mongo", options: "mongo", "percona")
 - `--upgrade-fcv`: Upgrade Feature Compatibility Version after binary upgrade (default: false)
 - `--parallel-shards`: Upgrade shards in parallel (default: false, sequential)
-- `--yes`: Skip confirmation prompts
+- `--yes`: Skip confirmation prompts (equivalent to `--prompt-level none`)
+- `--prompt-level <level>`: Prompting granularity (default: "phase", options: "none", "phase", "node", "critical") [UPG-016]
+- `--resume`: Resume a paused or failed upgrade from checkpoint [UPG-016]
+- `--resume-with-prompt-level <level>`: Override prompt level when resuming [UPG-016]
 - `--dry-run`: Show upgrade plan without executing
 - `--balancer-timeout <duration>`: Timeout for balancer to stop (default: 5m)
 - `--force`: Override health check failures (dangerous, requires confirmation)
@@ -541,6 +587,129 @@ mup cluster rollback <cluster-name> [flags]
 
 ---
 
+### UPG-016: Configurable User Prompting and Interaction
+**EARS-ID**: UPG-016
+**Type**: Ubiquitous
+**Requirement**: The system **shall** provide configurable prompting granularity to allow users to control when they are asked for confirmation during upgrades, with support for interactive pause/resume operations.
+
+**Prompt Granularity Levels**:
+
+1. **`--prompt-level none`** (Fully Automated)
+   - No prompts during upgrade execution
+   - Equivalent to `--yes` flag behavior
+   - Use case: CI/CD pipelines, automated deployments
+   - Upgrades proceed through all phases without interaction
+   - Failures still halt execution with error message
+
+2. **`--prompt-level phase`** (Phase-Level Prompting - DEFAULT)
+   - Prompt before each major phase begins
+   - Prompt locations:
+     - Before Phase 1: Config servers upgrade
+     - Before Phase 2: Each shard upgrade
+     - Before Phase 3: Mongos upgrade
+     - Before Phase 4: FCV upgrade (if `--upgrade-fcv`)
+   - User options at each prompt: Continue, Pause, Abort
+   - Use case: Production upgrades with checkpoint control
+   - Default behavior if `--prompt-level` not specified
+
+3. **`--prompt-level node`** (Node-Level Prompting)
+   - Prompt before upgrading each individual node
+   - Provides maximum control and visibility
+   - User options at each prompt:
+     - **Continue**: Proceed with this node upgrade
+     - **Skip**: Skip this node (mark as skipped in state)
+     - **Pause**: Save checkpoint and exit (resume later)
+     - **Abort**: Halt upgrade and prompt for rollback
+   - Use case: Critical production systems requiring manual verification per node
+   - Displays node role (PRIMARY, SECONDARY) before prompt
+
+4. **`--prompt-level critical`** (Critical Operations Only)
+   - Prompt only before critical, potentially disruptive operations
+   - Critical operations:
+     - Primary stepdown (`rs.stepDown()`)
+     - FCV upgrade (`setFeatureCompatibilityVersion`)
+     - Balancer state changes (disable/enable)
+     - Config database backup
+   - User options: Continue, Abort
+   - Use case: Balance between automation and safety
+   - Non-critical operations (secondary upgrades) proceed automatically
+
+**Interactive Commands During Execution**:
+When prompts are displayed, users shall have access to:
+- **View Status**: Display current cluster state and upgrade progress
+- **View Logs**: Show recent log entries from current operation
+- **Health Check**: Run health verification on demand [UPG-006]
+- **Skip Node**: Mark current node as skipped (node-level only)
+- **Pause**: Create checkpoint and exit gracefully
+- **Continue**: Proceed with operation
+- **Abort**: Halt upgrade and offer rollback
+
+**Pause and Resume Workflow**:
+1. **User initiates pause** (via prompt response or Ctrl+C)
+2. System creates checkpoint [UPG-011]
+3. Current operation completes if in progress (graceful shutdown)
+4. State saved with status `paused`
+5. System exits with message: "Upgrade paused. Resume with: mup cluster upgrade <name> --resume"
+
+**Resume Behavior**:
+```bash
+mup cluster upgrade <cluster-name> --resume [flags]
+```
+- Loads checkpoint state from upgrade-state.yaml
+- Validates cluster health before resuming
+- Presents summary of completed and pending operations
+- Prompts: "Resume upgrade from <last checkpoint>? (y/n)"
+- Continues with same `--prompt-level` as original upgrade
+- Allows changing `--prompt-level` with `--resume-with-prompt-level` flag
+
+**Prompt UI Format**:
+```
+╔═══════════════════════════════════════════════════════╗
+║  MongoDB Upgrade Progress                             ║
+╠═══════════════════════════════════════════════════════╣
+║  Phase: Shard 1 Upgrade (shard01)                     ║
+║  Next Node: localhost:27018 (SECONDARY)               ║
+║  Progress: 3/6 nodes completed                        ║
+║  Estimated Time: 5 minutes remaining                  ║
+╠═══════════════════════════════════════════════════════╣
+║  Ready to upgrade localhost:27018                     ║
+║                                                        ║
+║  Options:                                              ║
+║    c - Continue with this node                        ║
+║    s - Skip this node (node-level only)               ║
+║    p - Pause and save checkpoint                      ║
+║    a - Abort upgrade                                  ║
+║    h - Health check                                   ║
+║    v - View status                                    ║
+║                                                        ║
+║  Choice [c/s/p/a/h/v]:                                ║
+╚═══════════════════════════════════════════════════════╝
+```
+
+**Integration with State Tracking**:
+- Prompt responses logged in upgrade state [UPG-011]
+- Skipped nodes recorded with reason
+- Pause events create checkpoints with timestamp
+- Resume operations validate state consistency
+
+**Acceptance Criteria**:
+- All four prompt levels implemented and documented
+- Default level is `phase` if flag not specified
+- `--yes` flag continues to work (maps to `--prompt-level none`)
+- Prompt UI displays relevant context (phase, node, role, progress)
+- User can pause at any prompt and resume later
+- Skipped nodes tracked in state and reported at end
+- Ctrl+C triggers graceful pause with checkpoint
+- Resume validates state before continuing
+- Prompt level can be overridden on resume
+- Help text documents all prompt levels and options
+- Interactive commands work at all prompt points
+- Prompts timeout after configurable duration (default: no timeout)
+
+**EARS Tags**: [UPG-016]
+
+---
+
 ## Traceability Matrix
 
 | EARS ID | Component | Implementation Location | Test Location |
@@ -560,6 +729,7 @@ mup cluster rollback <cluster-name> [flags]
 | UPG-013 | Upgrade command | cmd/mup/cluster.go | N/A (integration tests) |
 | UPG-014 | Config DB backup/restore | pkg/upgrade/backup.go | pkg/upgrade/backup_test.go |
 | UPG-015 | Rollback command | cmd/mup/cluster.go, pkg/upgrade/rollback.go | pkg/upgrade/rollback_test.go |
+| UPG-016 | User prompting & interaction | pkg/upgrade/prompt.go | pkg/upgrade/prompt_test.go |
 
 ---
 
@@ -592,11 +762,11 @@ After implementing each requirement, update `docs/IMPLEMENTATION.md` with:
 ---
 
 ## Future Enhancements
-- UPG-016: Remote SSH-based upgrades (Phase 4+)
-- UPG-017: Rolling upgrades with zero downtime guarantees
-- UPG-018: Upgrade simulation mode with validation only
-- UPG-019: Cross-variant migrations (mongo → percona)
-- UPG-020: Partial upgrades (specific shards only)
-- UPG-021: Automated full cluster backup before upgrade
-- UPG-022: Performance benchmarking during upgrade
-- UPG-023: Upgrade cost estimation (time and resources)
+- UPG-017: Remote SSH-based upgrades (Phase 4+)
+- UPG-018: Rolling upgrades with zero downtime guarantees
+- UPG-019: Upgrade simulation mode with validation only
+- UPG-020: Cross-variant migrations (mongo → percona)
+- UPG-021: Partial upgrades (specific shards only)
+- UPG-022: Automated full cluster backup before upgrade
+- UPG-023: Performance benchmarking during upgrade
+- UPG-024: Upgrade cost estimation (time and resources)

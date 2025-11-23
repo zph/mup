@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/zph/mup/pkg/supervisor"
@@ -65,8 +66,8 @@ func (d *Deployer) createDirectories(ctx context.Context) error {
 		// Add directories for mongos nodes
 		for _, node := range d.topology.Mongos {
 			if node.Host == host {
-				dirs[d.getNodeLogDir(node.Host, node.Port, node.LogDir)] = true
-				dirs[d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)] = true
+				dirs[d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos")] = true
+				dirs[d.getNodeConfigDirWithType(node.Host, node.Port, node.ConfigDir, "mongos")] = true
 			}
 		}
 
@@ -98,7 +99,7 @@ func (d *Deployer) generateConfigurations(ctx context.Context) error {
 
 	// Generate configs for mongod nodes
 	for _, node := range d.topology.Mongod {
-		if err := d.generateMongodConfig(node); err != nil {
+		if err := d.GenerateMongodConfig(node); err != nil {
 			return fmt.Errorf("failed to generate config for mongod %s:%d: %w",
 				node.Host, node.Port, err)
 		}
@@ -109,7 +110,7 @@ func (d *Deployer) generateConfigurations(ctx context.Context) error {
 
 	// Generate configs for config server nodes
 	for _, node := range d.topology.ConfigSvr {
-		if err := d.generateConfigServerConfig(node); err != nil {
+		if err := d.GenerateConfigServerConfig(node); err != nil {
 			return fmt.Errorf("failed to generate config for config server %s:%d: %w",
 				node.Host, node.Port, err)
 		}
@@ -118,8 +119,9 @@ func (d *Deployer) generateConfigurations(ctx context.Context) error {
 	return nil
 }
 
-// generateMongodConfig generates configuration for a mongod node using templates
-func (d *Deployer) generateMongodConfig(node topology.MongodNode) error {
+// GenerateMongodConfig generates configuration for a mongod node using templates
+// Exported for use by upgrade package to regenerate configs for new versions
+func (d *Deployer) GenerateMongodConfig(node topology.MongodNode) error {
 	exec := d.executors[node.Host]
 
 	configPath := filepath.Join(
@@ -193,12 +195,13 @@ func (d *Deployer) generateMongodConfig(node topology.MongodNode) error {
 	return nil
 }
 
-// generateMongosConfig generates configuration for a mongos node using templates
-func (d *Deployer) generateMongosConfig(node topology.MongosNode) error {
+// GenerateMongosConfig generates configuration for a mongos node using templates
+// Exported for use by upgrade package to regenerate configs for new versions
+func (d *Deployer) GenerateMongosConfig(node topology.MongosNode) error {
 	exec := d.executors[node.Host]
 
 	configPath := filepath.Join(
-		d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir),
+		d.getNodeConfigDirWithType(node.Host, node.Port, node.ConfigDir, "mongos"),
 		"mongos.conf",
 	)
 
@@ -210,12 +213,12 @@ func (d *Deployer) generateMongosConfig(node topology.MongosNode) error {
 		},
 		SystemLog: template.SystemLogConfig{
 			Destination: "file",
-			Path:        filepath.Join(d.getNodeLogDir(node.Host, node.Port, node.LogDir), "mongos.log"),
+			Path:        filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"), "mongos.log"),
 			LogAppend:   true,
 		},
 		ProcessManagement: template.ProcessManagementConfig{
 			Fork:        false,
-			PIDFilePath: filepath.Join(d.getNodeLogDir(node.Host, node.Port, node.LogDir), "mongos.pid"),
+			PIDFilePath: filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"), "mongos.pid"),
 		},
 		Sharding: template.MongosShardingConfig{
 			ConfigDB: d.getConfigServerConnectionString(),
@@ -243,8 +246,9 @@ func (d *Deployer) generateMongosConfig(node topology.MongosNode) error {
 	return nil
 }
 
-// generateConfigServerConfig generates configuration for a config server node using templates
-func (d *Deployer) generateConfigServerConfig(node topology.ConfigNode) error {
+// GenerateConfigServerConfig generates configuration for a config server node using templates
+// Exported for use by upgrade package to regenerate configs for new versions
+func (d *Deployer) GenerateConfigServerConfig(node topology.ConfigNode) error {
 	exec := d.executors[node.Host]
 
 	configPath := filepath.Join(
@@ -313,12 +317,26 @@ func (d *Deployer) generateConfigServerConfig(node topology.ConfigNode) error {
 func (d *Deployer) generateSupervisorConfigs(ctx context.Context) error {
 	fmt.Println("Generating supervisord configuration files...")
 
-	// Create a ConfigGenerator for supervisor
-	gen := supervisor.NewConfigGenerator(d.metaDir, d.clusterName, d.topology, d.version, d.binPath)
+	// Use version-specific directory for supervisor config
+	versionDir := filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version))
+
+	// Copy binaries to version directory
+	if err := d.setupVersionBinaries(versionDir); err != nil {
+		return fmt.Errorf("failed to setup version binaries: %w", err)
+	}
+
+	// Create a ConfigGenerator for supervisor using version directory
+	binPath := filepath.Join(versionDir, "bin")
+	gen := supervisor.NewConfigGenerator(versionDir, d.clusterName, d.topology, d.version, binPath)
 
 	// Generate all supervisor configs (main + per-node)
 	if err := gen.GenerateAll(); err != nil {
 		return fmt.Errorf("failed to generate supervisor configs: %w", err)
+	}
+
+	// Create current/previous symlinks
+	if err := d.createVersionSymlinks(versionDir); err != nil {
+		return fmt.Errorf("failed to create version symlinks: %w", err)
 	}
 
 	fmt.Println("  Generated supervisord configuration")
@@ -335,8 +353,9 @@ func (d *Deployer) startProcesses(ctx context.Context) error {
 		return fmt.Errorf("port verification failed: %w", err)
 	}
 
-	// Load the supervisor manager with the generated config
-	mgr, err := supervisor.LoadManager(d.metaDir, d.clusterName)
+	// Load the supervisor manager with the generated config from version directory
+	versionDir := filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version))
+	mgr, err := supervisor.LoadManager(versionDir, d.clusterName)
 	if err != nil {
 		return fmt.Errorf("failed to load supervisor manager: %w", err)
 	}
@@ -345,6 +364,13 @@ func (d *Deployer) startProcesses(ctx context.Context) error {
 	fmt.Println("  Starting supervisord daemon...")
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start supervisord: %w", err)
+	}
+
+	// Reload supervisor configuration to pick up any newly generated program definitions
+	// This is needed if supervisord was already running from a previous deployment
+	fmt.Println("  Reloading supervisord configuration...")
+	if err := mgr.Reload(); err != nil {
+		return fmt.Errorf("failed to reload supervisor config: %w", err)
 	}
 
 	// Start config servers first (if sharded cluster) - in parallel
@@ -421,27 +447,142 @@ func (d *Deployer) verifyPortsBeforeStart() error {
 	return nil
 }
 
+// setupVersionBinaries copies MongoDB binaries to version-specific directory
+func (d *Deployer) setupVersionBinaries(versionDir string) error {
+	if !d.isLocal {
+		return nil // Only needed for local deployments
+	}
+
+	binDir := filepath.Join(versionDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	// Copy binaries from binary manager cache to version directory
+	binaries := []string{"mongod", "mongos", "mongosh", "mongo"}
+	for _, binary := range binaries {
+		srcPath := filepath.Join(d.binPath, binary)
+		dstPath := filepath.Join(binDir, binary)
+
+		// Skip if source doesn't exist
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+
+		// Skip if already copied
+		if _, err := os.Stat(dstPath); err == nil {
+			continue
+		}
+
+		// Copy file
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", binary, err)
+		}
+
+		// Make executable
+		if err := os.Chmod(dstPath, 0755); err != nil {
+			return fmt.Errorf("failed to make %s executable: %w", binary, err)
+		}
+	}
+
+	fmt.Printf("  Copied binaries to %s\n", binDir)
+	return nil
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	if _, err := destFile.ReadFrom(sourceFile); err != nil {
+		return err
+	}
+
+	return destFile.Sync()
+}
+
+// createVersionSymlinks creates current and previous symlinks
+func (d *Deployer) createVersionSymlinks(versionDir string) error {
+	if !d.isLocal {
+		return nil // Only needed for local deployments
+	}
+
+	versionName := fmt.Sprintf("v%s", d.version)
+	currentLink := filepath.Join(d.metaDir, "current")
+	previousLink := filepath.Join(d.metaDir, "previous")
+
+	// Get old version from current symlink if it exists
+	oldVersion := ""
+	if target, err := os.Readlink(currentLink); err == nil {
+		oldVersion = target
+	}
+
+	// Remove old symlinks
+	os.Remove(currentLink)
+	if oldVersion != "" {
+		os.Remove(previousLink)
+	}
+
+	// Create new symlinks
+	if err := os.Symlink(versionName, currentLink); err != nil {
+		return fmt.Errorf("failed to create current symlink: %w", err)
+	}
+
+	if oldVersion != "" && oldVersion != versionName {
+		if err := os.Symlink(oldVersion, previousLink); err != nil {
+			// Log warning but don't fail
+			fmt.Printf("  Warning: failed to create previous symlink: %v\n", err)
+		}
+	}
+
+	fmt.Printf("  Created symlinks: current -> %s\n", versionName)
+	return nil
+}
+
 // Helper functions for directory paths
+// Uses per-version directory structure for conf/ and logs/, but keeps data/ version-independent
 
 func (d *Deployer) getNodeDataDir(host string, port int, defaultDir string) string {
 	if d.isLocal {
+		// Data directory is version-independent (MongoDB handles compatibility)
 		return filepath.Join(d.metaDir, "data", fmt.Sprintf("%s-%d", host, port))
 	}
 	return filepath.Join(defaultDir, fmt.Sprintf("mongod-%d", port))
 }
 
 func (d *Deployer) getNodeLogDir(host string, port int, defaultDir string) string {
-	if d.isLocal {
-		return filepath.Join(d.metaDir, "logs", fmt.Sprintf("%s-%d", host, port))
-	}
-	return filepath.Join(defaultDir, fmt.Sprintf("mongod-%d", port))
+	return d.getNodeLogDirWithType(host, port, defaultDir, "mongod")
 }
 
 func (d *Deployer) getNodeConfigDir(host string, port int, defaultDir string) string {
+	return d.getNodeConfigDirWithType(host, port, defaultDir, "mongod")
+}
+
+// getNodeLogDirWithType gets log directory for a node with explicit type (mongod/mongos)
+func (d *Deployer) getNodeLogDirWithType(host string, port int, defaultDir string, nodeType string) string {
 	if d.isLocal {
-		return filepath.Join(d.metaDir, "conf", fmt.Sprintf("%s-%d", host, port))
+		// Logs are version-specific, per-process directory structure
+		return filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), fmt.Sprintf("%s-%d", nodeType, port), "log")
 	}
-	return filepath.Join(defaultDir, fmt.Sprintf("mongod-%d", port))
+	return filepath.Join(defaultDir, fmt.Sprintf("%s-%d", nodeType, port))
+}
+
+// getNodeConfigDirWithType gets config directory for a node with explicit type (mongod/mongos)
+func (d *Deployer) getNodeConfigDirWithType(host string, port int, defaultDir string, nodeType string) string {
+	if d.isLocal {
+		// Config is version-specific, per-process directory structure
+		return filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), fmt.Sprintf("%s-%d", nodeType, port), "config")
+	}
+	return filepath.Join(defaultDir, fmt.Sprintf("%s-%d", nodeType, port))
 }
 
 func (d *Deployer) getConfigServerConnectionString() string {

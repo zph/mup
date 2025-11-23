@@ -3,6 +3,8 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -121,6 +123,32 @@ func (d *Deployer) waitForNode(ctx context.Context, host string, port int, deadl
 		// Wait before next poll
 		logger.Debug("  Sleeping %v before next attempt", pollInterval)
 		time.Sleep(pollInterval)
+	}
+
+	// If we timed out, try to read the log file for diagnostics
+	if d.supervisorMgr != nil {
+		programName := fmt.Sprintf("mongod-%d", port)
+		logger.Debug("Reading logs for %s after timeout", programName)
+
+		// Try to find and read the log file
+		logDir := d.getNodeLogDir(host, port, "")
+		logFile := filepath.Join(logDir, "mongod.log")
+
+		if content, err := os.ReadFile(logFile); err == nil {
+			// Print last 30 lines of log
+			lines := strings.Split(string(content), "\n")
+			startLine := 0
+			if len(lines) > 30 {
+				startLine = len(lines) - 30
+			}
+			fmt.Printf("\nLast 30 lines of %s:\n", logFile)
+			for i := startLine; i < len(lines); i++ {
+				if strings.TrimSpace(lines[i]) != "" {
+					fmt.Printf("  %s\n", lines[i])
+				}
+			}
+			fmt.Println()
+		}
 	}
 
 	return fmt.Errorf("timeout waiting for node to be ready")
@@ -574,7 +602,7 @@ func (d *Deployer) generateMongosConfigs(ctx context.Context) error {
 	fmt.Println("Generating mongos configuration files...")
 
 	for _, node := range d.topology.Mongos {
-		if err := d.generateMongosConfig(node); err != nil {
+		if err := d.GenerateMongosConfig(node); err != nil {
 			return fmt.Errorf("failed to generate config for mongos %s:%d: %w",
 				node.Host, node.Port, err)
 		}

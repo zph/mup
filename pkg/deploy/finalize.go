@@ -156,7 +156,7 @@ func (d *Deployer) collectNodeMetadata() []NodeMetadata {
 
 	// Collect mongos nodes
 	for _, node := range d.topology.Mongos {
-		configDir := d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)
+		configDir := d.getNodeConfigDirWithType(node.Host, node.Port, node.ConfigDir, "mongos")
 		programName := fmt.Sprintf("mongos-%d", node.Port)
 		supervisorConfigFile := filepath.Join(d.metaDir, "conf", fmt.Sprintf("%s-%d", node.Host, node.Port), "supervisor-mongos.ini")
 
@@ -172,7 +172,7 @@ func (d *Deployer) collectNodeMetadata() []NodeMetadata {
 			Type:                  "mongos",
 			Host:                  node.Host,
 			Port:                  node.Port,
-			LogDir:                d.getNodeLogDir(node.Host, node.Port, node.LogDir),
+			LogDir:                d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"),
 			ConfigDir:             configDir,
 			ConfigFile:            filepath.Join(configDir, "mongos.conf"),
 			SupervisorProgramName: programName,

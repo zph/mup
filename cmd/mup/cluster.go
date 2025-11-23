@@ -10,7 +10,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zph/mup/pkg/cluster"
 	"github.com/zph/mup/pkg/deploy"
+	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/upgrade"
 )
 
 var (
@@ -25,6 +27,16 @@ var (
 	clusterNodeFilter    string
 	clusterDisplayFormat string
 	clusterKeepData      bool
+
+	// Upgrade command flags [UPG-013]
+	clusterUpgradeToVersion      string
+	clusterUpgradeVariant        string
+	clusterUpgradeFCV            bool
+	clusterUpgradeParallelShards bool
+	clusterUpgradePromptLevel    string
+	clusterUpgradeResume         bool
+	clusterUpgradeResumePromptLevel string
+	clusterUpgradeDryRun         bool
 )
 
 var clusterCmd = &cobra.Command{
@@ -287,12 +299,143 @@ Examples:
 	},
 }
 
+// [UPG-013] Upgrade command
+var clusterUpgradeCmd = &cobra.Command{
+	Use:   "upgrade <cluster-name>",
+	Short: "Upgrade MongoDB cluster to a new version",
+	Long: `Upgrade a MongoDB cluster to a new version with zero downtime.
+
+Supports rolling upgrades for replica sets and sharded clusters following
+MongoDB best practices:
+- Upgrade secondaries first, then step down and upgrade primary
+- Upgrade config servers, then shards, then mongos
+- Optional Feature Compatibility Version (FCV) upgrade
+
+The upgrade process is fully resumable with automatic checkpointing after
+each node. If the upgrade is interrupted, use --resume to continue.
+
+Prompt levels control interaction granularity:
+- none: Fully automated (equivalent to --yes)
+- phase: Prompt before each major phase (default)
+- node: Prompt before each node upgrade
+- critical: Prompt only for critical operations (stepdown, FCV)
+
+Examples:
+  # Upgrade to MongoDB 7.0 with default prompting
+  mup cluster upgrade my-rs --to-version 7.0
+
+  # Upgrade with FCV upgrade
+  mup cluster upgrade my-rs --to-version 7.0 --upgrade-fcv
+
+  # Fully automated upgrade
+  mup cluster upgrade my-rs --to-version 7.0 --prompt-level none
+
+  # Node-level control for critical systems
+  mup cluster upgrade my-rs --to-version 7.0 --prompt-level node
+
+  # Dry run to see the upgrade plan
+  mup cluster upgrade my-rs --to-version 7.0 --dry-run
+
+  # Resume interrupted upgrade
+  mup cluster upgrade my-rs --resume
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Silence usage on runtime errors (not argument errors)
+		cmd.SilenceUsage = true
+
+		clusterName := args[0]
+
+		ctx, cancel := context.WithTimeout(context.Background(), clusterDeployTimeout)
+		defer cancel()
+
+		// Get metadata directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		metaDir := fmt.Sprintf("%s/.mup/storage/clusters/%s", homeDir, clusterName)
+
+		// Load cluster metadata to get topology
+		metaMgr, err := meta.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to create meta manager: %w", err)
+		}
+		clusterMeta, err := metaMgr.Load(clusterName)
+		if err != nil {
+			return fmt.Errorf("failed to load cluster metadata: %w", err)
+		}
+
+		// Parse prompt level
+		promptLevel, err := parsePromptLevelFromFlags()
+		if err != nil {
+			return err
+		}
+
+		// Create state manager
+		stateManager, err := createStateManager(clusterName, metaDir)
+		if err != nil {
+			return err
+		}
+
+		// Initialize or load state
+		var state *upgrade.UpgradeState
+		if clusterUpgradeResume {
+			state, err = stateManager.LoadState()
+			if err != nil {
+				return fmt.Errorf("no upgrade state found to resume: %w", err)
+			}
+
+			// Override prompt level if specified
+			if clusterUpgradeResumePromptLevel != "" {
+				resumePromptLevel, err := parsePromptLevel(clusterUpgradeResumePromptLevel)
+				if err != nil {
+					return err
+				}
+				promptLevel = resumePromptLevel
+			}
+		} else {
+			// Validate required flags for new upgrade
+			if clusterUpgradeToVersion == "" {
+				return fmt.Errorf("--to-version is required for new upgrades")
+			}
+
+			state = stateManager.InitializeState(
+				clusterName,
+				fmt.Sprintf("%s-%s", clusterMeta.Variant, clusterMeta.Version),
+				fmt.Sprintf("%s-%s", clusterMeta.Variant, clusterUpgradeToVersion),
+			)
+			state.PromptLevel = string(promptLevel)
+		}
+
+		// Create prompter
+		prompter := createPrompter(promptLevel, state)
+
+		// Create upgrade config
+		config := createUpgradeConfig(clusterName, metaDir, clusterMeta, promptLevel, stateManager, prompter)
+
+		// Create upgrader (local for now)
+		upgrader, err := createLocalUpgrader(config)
+		if err != nil {
+			return fmt.Errorf("failed to create upgrader: %w", err)
+		}
+
+		// Execute upgrade or resume
+		if clusterUpgradeResume {
+			return upgrader.Resume(ctx)
+		}
+
+		return upgrader.Upgrade(ctx)
+	},
+}
+
 func init() {
 	// Add cluster command to root
 	rootCmd.AddCommand(clusterCmd)
 
 	// Add subcommands
 	clusterCmd.AddCommand(clusterDeployCmd)
+	clusterCmd.AddCommand(clusterUpgradeCmd)
 	clusterCmd.AddCommand(clusterStartCmd)
 	clusterCmd.AddCommand(clusterStopCmd)
 	clusterCmd.AddCommand(clusterDisplayCmd)
@@ -323,4 +466,79 @@ func init() {
 	// Destroy command flags
 	clusterDestroyCmd.Flags().BoolVar(&clusterKeepData, "keep-data", false, "Keep data directories")
 	clusterDestroyCmd.Flags().BoolVar(&clusterDeployYes, "yes", false, "Skip confirmation prompt")
+
+	// Upgrade command flags [UPG-013]
+	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradeToVersion, "to-version", "", "Target MongoDB version (required)")
+	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradeVariant, "variant", "", "Target variant (default: current cluster variant)")
+	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeFCV, "upgrade-fcv", false, "Upgrade Feature Compatibility Version after binary upgrade")
+	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeParallelShards, "parallel-shards", false, "Upgrade shards in parallel (default: sequential)")
+	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradePromptLevel, "prompt-level", "phase", "Prompting granularity: none, phase, node, critical")
+	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeResume, "resume", false, "Resume a paused or failed upgrade")
+	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradeResumePromptLevel, "resume-with-prompt-level", "", "Override prompt level when resuming")
+	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeDryRun, "dry-run", false, "Show upgrade plan without executing")
+}
+
+// Helper functions for upgrade command
+
+func parsePromptLevelFromFlags() (upgrade.PromptLevel, error) {
+	level := clusterUpgradePromptLevel
+	if clusterDeployYes {
+		level = "none"
+	}
+	return upgrade.ParsePromptLevel(level)
+}
+
+func parsePromptLevel(s string) (upgrade.PromptLevel, error) {
+	return upgrade.ParsePromptLevel(s)
+}
+
+func createStateManager(clusterName, metaDir string) (*upgrade.StateManager, error) {
+	return upgrade.NewStateManager(clusterName, metaDir)
+}
+
+func createPrompter(level upgrade.PromptLevel, state *upgrade.UpgradeState) *upgrade.Prompter {
+	return upgrade.NewPrompter(level, state)
+}
+
+func createUpgradeConfig(clusterName, metaDir string, clusterMeta *meta.ClusterMetadata, promptLevel upgrade.PromptLevel, stateManager *upgrade.StateManager, prompter *upgrade.Prompter) upgrade.UpgradeConfig {
+	// Parse topology from metadata
+	topo := clusterMeta.Topology
+
+	// Create executors (local only for now)
+	executors := make(map[string]executor.Executor)
+	for _, host := range topo.GetAllHosts() {
+		executors[host] = executor.NewLocalExecutor()
+	}
+
+	// Parse target variant
+	targetVariant := clusterUpgradeVariant
+	if targetVariant == "" {
+		targetVariant = clusterMeta.Variant
+	}
+
+	variant, err := deploy.ParseVariant(targetVariant)
+	if err != nil {
+		fmt.Printf("Warning: invalid variant %s, using cluster default\n", targetVariant)
+		variant, _ = deploy.ParseVariant(clusterMeta.Variant)
+	}
+
+	return upgrade.UpgradeConfig{
+		ClusterName:      clusterName,
+		FromVersion:      clusterMeta.Version,
+		ToVersion:        clusterUpgradeToVersion,
+		TargetVariant:    variant,
+		UpgradeFCV:       clusterUpgradeFCV,
+		ParallelShards:   clusterUpgradeParallelShards,
+		PromptLevel:      promptLevel,
+		MetaDir:          metaDir,
+		Topology:         topo,
+		Executors:        executors,
+		StateManager:     stateManager,
+		Prompter:         prompter,
+		DryRun:           clusterUpgradeDryRun,
+	}
+}
+
+func createLocalUpgrader(config upgrade.UpgradeConfig) (*upgrade.LocalUpgrader, error) {
+	return upgrade.NewLocalUpgrader(config)
 }
