@@ -1,0 +1,21 @@
+# Simulation scenario: Permission denied
+# Tests handling of insufficient permissions
+# REQ-SIM-041, REQ-SIM-042
+
+simulation:
+  responses:
+    "whoami": "mongodb"
+    "id mongodb": "uid=999(mongodb) gid=999(mongodb)"
+
+  failures:
+    - operation: create_directory
+      target: "/etc/mongodb"
+      error: "mkdir: cannot create directory '/etc/mongodb': Permission denied"
+
+    - operation: upload_file
+      target: "/etc/mongod.conf"
+      error: "scp: /etc/mongod.conf: Permission denied"
+
+    - operation: create_directory
+      target: "/opt/mongodb"
+      error: "mkdir: cannot create directory '/opt/mongodb': Permission denied"

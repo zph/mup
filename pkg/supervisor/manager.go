@@ -475,12 +475,12 @@ func readPortFromConfig(configPath string) (int, error) {
 	return 0, fmt.Errorf("port not found in config")
 }
 
-// getSupervisorHTTPPort generates a unique HTTP port for this cluster's supervisor
+// GetSupervisorHTTPPortForDir generates a unique HTTP port for this cluster's supervisor
 // Uses hash of cluster directory (includes version) to get a port in range 19000-19999
 // This must match the logic in ConfigGenerator.getSupervisorHTTPPort()
 // Using clusterDir instead of clusterName allows multiple supervisors (different versions)
 // to run side-by-side during upgrades
-func getSupervisorHTTPPort(clusterDir string) int {
+func GetSupervisorHTTPPortForDir(clusterDir string) int {
 	h := fnv.New32a()
 	h.Write([]byte(clusterDir))
 	hash := h.Sum32()
@@ -488,4 +488,9 @@ func getSupervisorHTTPPort(clusterDir string) int {
 	// Map to port range 19000-19999 (1000 ports available)
 	port := 19000 + int(hash%1000)
 	return port
+}
+
+// getSupervisorHTTPPort is the internal version that maintains backwards compatibility
+func getSupervisorHTTPPort(clusterDir string) int {
+	return GetSupervisorHTTPPortForDir(clusterDir)
 }

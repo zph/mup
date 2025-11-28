@@ -106,6 +106,16 @@ func NewUpgrader(config UpgradeConfig) (*Upgrader, error) {
 		fmt.Printf("Found existing upgrade state (ID: %s, status: %s)\n", state.UpgradeID, state.OverallStatus)
 	}
 
+	// Initialize HookRegistry if not provided
+	if config.HookRegistry == nil {
+		config.HookRegistry = NewHookRegistry()
+	}
+
+	// Initialize WaitConfig if not provided
+	if config.WaitConfig == nil {
+		config.WaitConfig = DefaultWaitConfig()
+	}
+
 	return &Upgrader{
 		config:      config,
 		state:       state,
@@ -142,11 +152,40 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 		return u.generateUpgradePlan()
 	}
 
+	// Execute on-upgrade-start hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookOnUpgradeStart,
+		ClusterName: u.config.ClusterName,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		return fmt.Errorf("on-upgrade-start hook failed: %w", err)
+	}
+
+	// Defer on-upgrade-failure hook to run if upgrade fails
+	var upgradeErr error
+	defer func() {
+		if upgradeErr != nil {
+			// Execute on-upgrade-failure hook (best effort, don't fail on hook error)
+			hookErr := u.config.HookRegistry.Execute(ctx, HookContext{
+				HookType:    HookOnUpgradeFailure,
+				ClusterName: u.config.ClusterName,
+				FromVersion: u.config.FromVersion,
+				ToVersion:   u.config.ToVersion,
+				Error:       upgradeErr,
+			})
+			if hookErr != nil {
+				fmt.Printf("Warning: on-upgrade-failure hook failed: %v\n", hookErr)
+			}
+		}
+	}()
+
 	// Phase 0: Pre-flight validation
 	if err := u.executePhase(ctx, PhasePreFlight, func(ctx context.Context) error {
 		return u.impl.ValidatePrerequisites(ctx)
 	}); err != nil {
-		return fmt.Errorf("pre-flight validation failed: %w", err)
+		upgradeErr = fmt.Errorf("pre-flight validation failed: %w", err)
+		return upgradeErr
 	}
 
 	// For local upgrades: Setup version directories and start new supervisor
@@ -241,6 +280,17 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	fmt.Println("\n✓ Upgrade completed successfully!")
 	u.displaySuccessSummary()
 
+	// Execute on-upgrade-complete hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookOnUpgradeComplete,
+		ClusterName: u.config.ClusterName,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		fmt.Printf("Warning: on-upgrade-complete hook failed: %v\n", err)
+		// Don't fail the upgrade if the completion hook fails
+	}
+
 	return nil
 }
 
@@ -267,6 +317,17 @@ func (u *Upgrader) executePhase(ctx context.Context, phase PhaseName, fn func(co
 		}
 	}
 
+	// Execute before-phase hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookBeforePhase,
+		ClusterName: u.config.ClusterName,
+		Phase:       phase,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		return fmt.Errorf("before-phase hook failed: %w", err)
+	}
+
 	// Update phase state to in_progress
 	u.state.UpdatePhaseState(phase, PhaseStatusInProgress)
 	if err := u.config.StateManager.SaveState(u.state); err != nil {
@@ -282,6 +343,18 @@ func (u *Upgrader) executePhase(ctx context.Context, phase PhaseName, fn func(co
 
 	// Mark phase as completed
 	u.state.UpdatePhaseState(phase, PhaseStatusCompleted)
+
+	// Execute after-phase hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookAfterPhase,
+		ClusterName: u.config.ClusterName,
+		Phase:       phase,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		fmt.Printf("Warning: after-phase hook failed: %v\n", err)
+		// Don't fail the phase if after-phase hook fails
+	}
 	if err := u.config.StateManager.CreateCheckpoint(u.state, fmt.Sprintf("Phase %s completed", phase)); err != nil {
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
@@ -550,11 +623,40 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 
 	progress := NewNodeUpgradeProgress(hostPort)
 
+	// Execute before-node-upgrade hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookBeforeNodeUpgrade,
+		ClusterName: u.config.ClusterName,
+		Node:        hostPort,
+		NodeRole:    role,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		return fmt.Errorf("before-node-upgrade hook failed: %w", err)
+	}
+
+	// Defer on-node-failure hook
+	var nodeErr error
+	defer func() {
+		if nodeErr != nil {
+			u.config.HookRegistry.Execute(ctx, HookContext{
+				HookType:    HookOnNodeFailure,
+				ClusterName: u.config.ClusterName,
+				Node:        hostPort,
+				NodeRole:    role,
+				FromVersion: u.config.FromVersion,
+				ToVersion:   u.config.ToVersion,
+				Error:       nodeErr,
+			})
+		}
+	}()
+
 	// Step 1: Stop the node
 	progress.StartStep(0, "Stopping MongoDB process...")
 	if err := u.nodeOps.StopNode(ctx, nodeID); err != nil {
 		progress.FailStep(fmt.Sprintf("Failed to stop: %v", err))
-		return fmt.Errorf("failed to stop process: %w", err)
+		nodeErr = fmt.Errorf("failed to stop process: %w", err)
+		return nodeErr
 	}
 	progress.CompleteStep("Process stopped")
 
@@ -574,7 +676,8 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 	progress.StartStep(3, "Starting MongoDB with new version...")
 	if err := u.nodeOps.StartNode(ctx, nodeID); err != nil {
 		progress.FailStep(fmt.Sprintf("Failed to start: %v", err))
-		return fmt.Errorf("failed to start process: %w", err)
+		nodeErr = fmt.Errorf("failed to start process: %w", err)
+		return nodeErr
 	}
 	progress.CompleteStep("Process started")
 
@@ -582,7 +685,8 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 	progress.StartStep(4, "Waiting for node to be healthy...")
 	if err := u.nodeOps.WaitForNodeHealthy(ctx, nodeID, 30*time.Second); err != nil {
 		progress.FailStep("Timeout waiting for node")
-		return fmt.Errorf("health check failed: %w", err)
+		nodeErr = fmt.Errorf("health check failed: %w", err)
+		return nodeErr
 	}
 	progress.CompleteStep("Node is healthy")
 
@@ -590,9 +694,23 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 	progress.StartStep(5, "Verifying new version...")
 	if err := u.nodeOps.VerifyNodeVersion(ctx, nodeID, u.config.ToVersion); err != nil {
 		progress.FailStep(fmt.Sprintf("Version verification failed: %v", err))
-		return fmt.Errorf("version verification failed: %w", err)
+		nodeErr = fmt.Errorf("version verification failed: %w", err)
+		return nodeErr
 	}
 	progress.CompleteStep("Version verified")
+
+	// Execute after-node-upgrade hook
+	if err := u.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookAfterNodeUpgrade,
+		ClusterName: u.config.ClusterName,
+		Node:        hostPort,
+		NodeRole:    role,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+	}); err != nil {
+		// Don't fail the upgrade if after-node-upgrade hook fails
+		fmt.Printf("Warning: after-node-upgrade hook failed: %v\n", err)
+	}
 
 	// Update state
 	u.state.UpdateNodeState(hostPort, NodeStatusCompleted, "")

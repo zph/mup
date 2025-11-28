@@ -1,0 +1,111 @@
+# Simulation scenario: Sharded Cluster Initialization
+# Tests replica set initialization and shard addition
+# REQ-SIM-041, REQ-SIM-042
+
+simulation:
+  responses:
+    # Binary versions
+    "mongod --version": "db version v7.0.5"
+    "mongos --version": "mongos version v7.0.5"
+
+    # Replica set initialization (config servers)
+    "mongosh --port 27019 --eval 'rs.initiate()'": |
+      {
+        "ok": 1,
+        "operationTime": Timestamp(1700000000, 1),
+        "$clusterTime": {...}
+      }
+
+    # Replica set initialization (shard1)
+    "mongosh --port 27017 --eval 'rs.initiate()'": |
+      {
+        "ok": 1,
+        "operationTime": Timestamp(1700000001, 1),
+        "$clusterTime": {...}
+      }
+
+    # Replica set initialization (shard2)
+    "mongosh --port 27018 --eval 'rs.initiate()'": |
+      {
+        "ok": 1,
+        "operationTime": Timestamp(1700000002, 1),
+        "$clusterTime": {...}
+      }
+
+    # Replica set status checks
+    "mongosh --port 27019 --eval 'rs.status()'": |
+      {
+        "set": "configReplSet",
+        "members": [
+          {"_id": 0, "name": "localhost:27019", "stateStr": "PRIMARY", "health": 1}
+        ],
+        "ok": 1
+      }
+
+    "mongosh --port 27017 --eval 'rs.status()'": |
+      {
+        "set": "shard1",
+        "members": [
+          {"_id": 0, "name": "localhost:27017", "stateStr": "PRIMARY", "health": 1}
+        ],
+        "ok": 1
+      }
+
+    "mongosh --port 27018 --eval 'rs.status()'": |
+      {
+        "set": "shard2",
+        "members": [
+          {"_id": 0, "name": "localhost:27018", "stateStr": "PRIMARY", "health": 1}
+        ],
+        "ok": 1
+      }
+
+    # Add shards to cluster (via mongos)
+    "mongosh --port 27016 --eval 'sh.addShard(\"shard1/localhost:27017\")'": |
+      {
+        "shardAdded": "shard1",
+        "ok": 1
+      }
+
+    "mongosh --port 27016 --eval 'sh.addShard(\"shard2/localhost:27018\")'": |
+      {
+        "shardAdded": "shard2",
+        "ok": 1
+      }
+
+    # Sharding status
+    "mongosh --port 27016 --eval 'sh.status()'": |
+      {
+        "shards": [
+          {"_id": "shard1", "host": "shard1/localhost:27017", "state": 1},
+          {"_id": "shard2", "host": "shard2/localhost:27018", "state": 1}
+        ],
+        "databases": [],
+        "ok": 1
+      }
+
+  # No failures - successful setup scenario
+  failures: []
+
+  filesystem:
+    existing_directories:
+      - /data/config-27019
+      - /data/shard1-27017
+      - /data/shard2-27018
+      - /var/log/mongodb
+
+  processes:
+    # All processes started before initialization
+    running:
+      - command: mongod
+        port: 27019
+        pid: 1001
+      - command: mongod
+        port: 27017
+        pid: 1002
+      - command: mongod
+        port: 27018
+        pid: 1003
+      - command: mongos
+        port: 27016
+        pid: 2001

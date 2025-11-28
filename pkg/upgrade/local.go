@@ -266,6 +266,35 @@ func (lu *LocalUpgrader) ValidatePrerequisites(ctx context.Context) error {
 		}
 	}
 
+	// 10. Validate lifecycle hooks
+	fmt.Print("  Validating lifecycle hooks... ")
+	if err := lu.config.HookRegistry.Validate(); err != nil {
+		fmt.Println("✗")
+		return fmt.Errorf("hook validation failed: %w", err)
+	}
+	// Count registered hook types
+	allHookTypes := []HookType{
+		HookBeforeNodeUpgrade, HookAfterNodeUpgrade, HookOnNodeFailure,
+		HookBeforePrimaryStepdown, HookAfterPrimaryStepdown,
+		HookBeforeSecondaryUpgrade, HookAfterSecondaryUpgrade,
+		HookBeforePhase, HookAfterPhase,
+		HookBeforeFCVUpgrade, HookAfterFCVUpgrade,
+		HookBeforeBalancerStop, HookAfterBalancerStart,
+		HookBeforeShardUpgrade, HookAfterShardUpgrade,
+		HookOnUpgradeStart, HookOnUpgradeComplete, HookOnUpgradeFailure,
+	}
+	hookCount := 0
+	for _, hookType := range allHookTypes {
+		if lu.config.HookRegistry.HasHooks(hookType) {
+			hookCount++
+		}
+	}
+	if hookCount > 0 {
+		fmt.Printf("✓ (%d hook type(s) registered)\n", hookCount)
+	} else {
+		fmt.Println("✓ (no hooks registered)")
+	}
+
 	fmt.Println("  ✓ Pre-flight validation passed")
 	return nil
 }
@@ -877,6 +906,19 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 			return fmt.Errorf("failover aborted by user")
 		}
 
+		// Execute before-primary-stepdown hook
+		if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+			HookType:    HookBeforePrimaryStepdown,
+			ClusterName: lu.config.ClusterName,
+			Node:        hostPort,
+			NodeRole:    "PRIMARY",
+			ShardName:   rsName,
+			FromVersion: lu.config.FromVersion,
+			ToVersion:   lu.config.ToVersion,
+		}); err != nil {
+			return fmt.Errorf("before-primary-stepdown hook failed: %w", err)
+		}
+
 		fmt.Printf("\n  Initiating primary stepdown for %s...\n", hostPort)
 		failoverEvent, err := StepDownPrimary(ctx, hostPort, rsName, allHosts)
 		if err != nil {
@@ -892,6 +934,25 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 		fmt.Printf("  ✓ Failover complete: %s -> %s (election time: %dms)\n",
 			failoverEvent.OldPrimary, failoverEvent.NewPrimary, failoverEvent.ElectionTimeMS)
 		fmt.Printf("  Node %s is now a SECONDARY and ready for upgrade\n", hostPort)
+
+		// Execute after-primary-stepdown hook
+		if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+			HookType:    HookAfterPrimaryStepdown,
+			ClusterName: lu.config.ClusterName,
+			Node:        hostPort,
+			NodeRole:    "SECONDARY", // Now a secondary
+			ShardName:   rsName,
+			FromVersion: lu.config.FromVersion,
+			ToVersion:   lu.config.ToVersion,
+			Metadata: map[string]string{
+				"old_primary":      failoverEvent.OldPrimary,
+				"new_primary":      failoverEvent.NewPrimary,
+				"election_time_ms": fmt.Sprintf("%d", failoverEvent.ElectionTimeMS),
+			},
+		}); err != nil {
+			// Don't fail the upgrade if after-stepdown hook fails
+			fmt.Printf("Warning: after-primary-stepdown hook failed: %v\n", err)
+		}
 	}
 
 	fmt.Printf("\n  Upgrading %s (role: %s)\n", hostPort, role)
@@ -903,9 +964,41 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 	}
 	lu.config.StateManager.SaveState(lu.state)
 
+	// Execute before-secondary-upgrade hook (or general node upgrade if not secondary)
+	hookType := HookBeforeSecondaryUpgrade
+	if isPrimary {
+		// If we just stepped down, it's now a secondary
+		hookType = HookBeforeSecondaryUpgrade
+	}
+	if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    hookType,
+		ClusterName: lu.config.ClusterName,
+		Node:        hostPort,
+		NodeRole:    role,
+		ShardName:   rsName,
+		FromVersion: lu.config.FromVersion,
+		ToVersion:   lu.config.ToVersion,
+	}); err != nil {
+		return fmt.Errorf("before-secondary-upgrade hook failed: %w", err)
+	}
+
 	// Use base Upgrader's upgradeNode method (uses NodeOperations interface)
 	if err := lu.Upgrader.upgradeNode(ctx, node, role); err != nil {
 		return err
+	}
+
+	// Execute after-secondary-upgrade hook
+	if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookAfterSecondaryUpgrade,
+		ClusterName: lu.config.ClusterName,
+		Node:        hostPort,
+		NodeRole:    role,
+		ShardName:   rsName,
+		FromVersion: lu.config.FromVersion,
+		ToVersion:   lu.config.ToVersion,
+	}); err != nil {
+		// Don't fail the upgrade if after-secondary-upgrade hook fails
+		fmt.Printf("Warning: after-secondary-upgrade hook failed: %v\n", err)
 	}
 
 	return nil
@@ -1099,6 +1192,19 @@ func (lu *LocalUpgrader) upgradeFCV(ctx context.Context) error {
 	}
 	targetFCV := versionParts[0] + "." + versionParts[1]
 
+	// Execute before-fcv-upgrade hook
+	if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookBeforeFCVUpgrade,
+		ClusterName: lu.config.ClusterName,
+		FromVersion: lu.config.FromVersion,
+		ToVersion:   lu.config.ToVersion,
+		Metadata: map[string]string{
+			"target_fcv": targetFCV,
+		},
+	}); err != nil {
+		return fmt.Errorf("before-fcv-upgrade hook failed: %w", err)
+	}
+
 	// For MongoDB 7.0+, use confirm: true parameter for extra safety
 	// This requires explicit confirmation of the FCV upgrade
 	var cmd bson.D
@@ -1171,6 +1277,20 @@ func (lu *LocalUpgrader) upgradeFCV(ctx context.Context) error {
 
 	if currentFCV != targetFCV {
 		return fmt.Errorf("FCV verification failed: expected %s but got %s", targetFCV, currentFCV)
+	}
+
+	// Execute after-fcv-upgrade hook
+	if err := lu.config.HookRegistry.Execute(ctx, HookContext{
+		HookType:    HookAfterFCVUpgrade,
+		ClusterName: lu.config.ClusterName,
+		FromVersion: lu.config.FromVersion,
+		ToVersion:   lu.config.ToVersion,
+		Metadata: map[string]string{
+			"new_fcv": currentFCV,
+		},
+	}); err != nil {
+		// Don't fail the upgrade if after-fcv-upgrade hook fails
+		fmt.Printf("Warning: after-fcv-upgrade hook failed: %v\n", err)
 	}
 
 	return nil

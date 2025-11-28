@@ -41,11 +41,11 @@ func TestConfigGenerator_DataDirectoryPath(t *testing.T) {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
 
-	// Read generated config
-	configPath := filepath.Join(versionDir, "supervisor.ini")
-	content, err := os.ReadFile(configPath)
+	// Read per-node config file (not the main supervisor.ini which only has includes)
+	nodeConfigPath := filepath.Join(versionDir, "mongod-27017", "supervisor.conf")
+	content, err := os.ReadFile(nodeConfigPath)
 	if err != nil {
-		t.Fatalf("Failed to read config: %v", err)
+		t.Fatalf("Failed to read node config: %v", err)
 	}
 	configStr := string(content)
 

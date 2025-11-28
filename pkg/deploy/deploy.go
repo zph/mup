@@ -549,40 +549,52 @@ func (d *Deployer) createVersionSymlinks(versionDir string) error {
 }
 
 // Helper functions for directory paths
-// Uses per-version directory structure for conf/ and logs/, but keeps data/ version-independent
+// REQ-PM-022: Uses PathResolver and ClusterLayout for consistent path management
+// REQ-PM-011: Data directories are version-independent (MongoDB handles compatibility)
+// REQ-PM-010: Log and config directories are version-specific
 
+// REQ-PM-011: getNodeDataDir returns version-independent data directory
 func (d *Deployer) getNodeDataDir(host string, port int, defaultDir string) string {
-	if d.isLocal {
-		// Data directory is version-independent (MongoDB handles compatibility)
+	// Use pathResolver for consistent path construction
+	dataDir, err := d.pathResolver.DataDir(host, port)
+	if err != nil {
+		// Fallback to old behavior if error (shouldn't happen in practice)
 		return filepath.Join(d.metaDir, "data", fmt.Sprintf("%s-%d", host, port))
 	}
-	return filepath.Join(defaultDir, fmt.Sprintf("mongod-%d", port))
+	return dataDir
 }
 
+// REQ-PM-010: getNodeLogDir returns version-specific log directory for mongod
 func (d *Deployer) getNodeLogDir(host string, port int, defaultDir string) string {
 	return d.getNodeLogDirWithType(host, port, defaultDir, "mongod")
 }
 
+// REQ-PM-010: getNodeConfigDir returns version-specific config directory for mongod
 func (d *Deployer) getNodeConfigDir(host string, port int, defaultDir string) string {
 	return d.getNodeConfigDirWithType(host, port, defaultDir, "mongod")
 }
 
-// getNodeLogDirWithType gets log directory for a node with explicit type (mongod/mongos)
+// REQ-PM-010: getNodeLogDirWithType gets log directory for a node with explicit type (mongod/mongos/config)
+// REQ-PM-018/019/020: Process directories use patterns mongod-<port>, mongos-<port>, config-<port>
 func (d *Deployer) getNodeLogDirWithType(host string, port int, defaultDir string, nodeType string) string {
-	if d.isLocal {
-		// Logs are version-specific, per-process directory structure
+	// Use pathResolver for consistent version-specific path construction
+	logDir, err := d.pathResolver.LogDir(nodeType, host, port)
+	if err != nil {
+		// Fallback to old behavior if error (shouldn't happen in practice)
 		return filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), fmt.Sprintf("%s-%d", nodeType, port), "log")
 	}
-	return filepath.Join(defaultDir, fmt.Sprintf("%s-%d", nodeType, port))
+	return logDir
 }
 
-// getNodeConfigDirWithType gets config directory for a node with explicit type (mongod/mongos)
+// REQ-PM-010: getNodeConfigDirWithType gets config directory for a node with explicit type (mongod/mongos/config)
 func (d *Deployer) getNodeConfigDirWithType(host string, port int, defaultDir string, nodeType string) string {
-	if d.isLocal {
-		// Config is version-specific, per-process directory structure
+	// Use pathResolver for consistent version-specific path construction
+	configDir, err := d.pathResolver.ConfigDir(nodeType, host, port)
+	if err != nil {
+		// Fallback to old behavior if error (shouldn't happen in practice)
 		return filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), fmt.Sprintf("%s-%d", nodeType, port), "config")
 	}
-	return filepath.Join(defaultDir, fmt.Sprintf("%s-%d", nodeType, port))
+	return configDir
 }
 
 func (d *Deployer) getConfigServerConnectionString() string {

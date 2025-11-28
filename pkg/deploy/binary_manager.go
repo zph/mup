@@ -31,6 +31,14 @@ func (p Platform) Key() string {
 	return fmt.Sprintf("%s-%s", p.OS, p.Arch)
 }
 
+// GetCurrentPlatform returns the platform for the current runtime environment
+func GetCurrentPlatform() Platform {
+	return Platform{
+		OS:   runtime.GOOS,
+		Arch: runtime.GOARCH,
+	}
+}
+
 // BinaryManager manages MongoDB binaries for multiple platforms
 type BinaryManager struct {
 	cacheDir    string            // Base cache directory (~/.mup/storage/packages)

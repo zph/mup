@@ -3,10 +3,10 @@
 
 global:
   user: mongodb
-  deploy_dir: /opt/mongodb
-  data_dir: /data/mongodb
-  log_dir: /var/log/mongodb
-  config_dir: /etc/mongodb
+  deploy_dir: mongodb
+  data_dir: data
+  log_dir: log
+  config_dir: etc
 
 mongod_servers:
   - host: localhost

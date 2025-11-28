@@ -250,6 +250,14 @@ func (e *SSHExecutor) ExecuteWithInput(command string, stdin io.Reader) (string,
 	return stdout.String(), nil
 }
 
+// MongoExecute runs a MongoDB driver command
+// For SSHExecutor, this is just informational (the actual driver work happens in Go)
+func (e *SSHExecutor) MongoExecute(host string, command string) (string, error) {
+	// MongoDB driver commands don't actually execute as shell commands
+	// This method exists for interface compliance and logging
+	return "", nil
+}
+
 // Background starts a command in the background and returns its PID
 func (e *SSHExecutor) Background(command string) (int, error) {
 	// Use nohup and capture PID

@@ -267,6 +267,70 @@ func (r *HookRegistry) HasHooks(hookType HookType) bool {
 	return exists && len(hooks) > 0
 }
 
+// Validate checks that all registered hooks are valid
+// For CommandHooks: validates that script files exist and are executable
+// For FunctionHooks: no validation needed (compile-time checked)
+func (r *HookRegistry) Validate() error {
+	for hookType, hooks := range r.hooks {
+		for _, hook := range hooks {
+			// Only validate CommandHooks
+			if cmdHook, ok := hook.(*CommandHook); ok {
+				if err := validateCommandHook(cmdHook); err != nil {
+					return fmt.Errorf("hook %s (%s): %w", cmdHook.Name(), hookType, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateCommandHook checks if a command hook is valid
+// If the command appears to be a script file path, validate it exists and is executable
+func validateCommandHook(hook *CommandHook) error {
+	// Extract the first token from the command
+	// This handles cases like "./script.sh arg1 arg2" or "/path/to/script.sh"
+	command := strings.TrimSpace(hook.command)
+	if command == "" {
+		return fmt.Errorf("empty command")
+	}
+
+	// Split on whitespace to get first token
+	tokens := strings.Fields(command)
+	if len(tokens) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	firstToken := tokens[0]
+
+	// Check if first token looks like a file path (contains '/')
+	// This distinguishes "echo hello" from "./script.sh" or "/usr/bin/script"
+	if !strings.Contains(firstToken, "/") {
+		// Not a file path, it's a shell command - no validation needed
+		return nil
+	}
+
+	// It's a file path - validate it exists and is executable
+	fileInfo, err := os.Stat(firstToken)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("script file not found: %s", firstToken)
+		}
+		return fmt.Errorf("cannot access script file %s: %w", firstToken, err)
+	}
+
+	// Check if it's a regular file
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("script path is not a regular file: %s", firstToken)
+	}
+
+	// Check if it's executable (has any execute bit set)
+	if fileInfo.Mode()&0111 == 0 {
+		return fmt.Errorf("script file is not executable: %s (use chmod +x)", firstToken)
+	}
+
+	return nil
+}
+
 // WaitManager handles wait times during upgrade
 type WaitManager struct {
 	config *WaitConfig

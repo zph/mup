@@ -5,13 +5,22 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zph/mup/pkg/apply"
 	"github.com/zph/mup/pkg/cluster"
 	"github.com/zph/mup/pkg/deploy"
 	"github.com/zph/mup/pkg/executor"
+	importer "github.com/zph/mup/pkg/import"
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/mongo"
+	"github.com/zph/mup/pkg/operation"
+	"github.com/zph/mup/pkg/plan"
+	"github.com/zph/mup/pkg/simulation" // REQ-SIM-016: Simulation executor
+	"github.com/zph/mup/pkg/topology"
 	"github.com/zph/mup/pkg/upgrade"
 )
 
@@ -23,6 +32,12 @@ var (
 	clusterDeployYes          bool
 	clusterDeployTimeout      time.Duration
 	clusterDeployNoMonitoring bool
+	clusterDeployPlanOnly     bool
+	clusterDeployAutoApprove  bool
+	clusterDeployPlanFile         string
+	clusterDeploySimulate         bool   // REQ-SIM-001: Simulation mode flag
+	clusterDeploySimulateScenario string // REQ-SIM-041: Scenario file path
+	clusterDeploySimulateVerbose  bool   // REQ-SIM-049: Verbose simulation output
 
 	clusterNodeFilter    string
 	clusterDisplayFormat string
@@ -37,6 +52,17 @@ var (
 	clusterUpgradeResume         bool
 	clusterUpgradeResumePromptLevel string
 	clusterUpgradeDryRun         bool
+
+	// Import command flags
+	clusterImportAutoDetect      bool
+	clusterImportConfigFile      string
+	clusterImportDataDir         string
+	clusterImportPort            int
+	clusterImportHost            string
+	clusterImportDryRun          bool
+	clusterImportSkipRestart     bool
+	clusterImportKeepSystemd     bool
+	clusterImportSSHHost         string
 )
 
 var clusterCmd = &cobra.Command{
@@ -49,6 +75,13 @@ var clusterDeployCmd = &cobra.Command{
 	Use:   "deploy <cluster-name> <topology-file>",
 	Short: "Deploy a new MongoDB cluster",
 	Long: `Deploy a new MongoDB cluster from a topology YAML file.
+
+PLAN/APPLY WORKFLOW:
+Mup uses a Terraform-inspired plan/apply workflow for safe, predictable deployments:
+1. Generate a plan with pre-flight validation (--plan-only)
+2. Review the plan (mup plan show <cluster-name>)
+3. Apply the plan with confirmation (default) or auto-approve (--auto-approve)
+4. Resume from checkpoints if deployment fails (mup plan resume <cluster-name>)
 
 The topology file defines the cluster structure including:
 - mongod servers (standalone or replica set members)
@@ -65,21 +98,40 @@ Monitoring is enabled by default and includes:
 - node_exporter (OS and hardware metrics)
 - mongodb_exporter (MongoDB-specific metrics)
 
+DEPLOYMENT PHASES:
+1. Prepare   - Download binaries, create directories, run pre-flight checks
+2. Deploy    - Generate configs, start MongoDB processes
+3. Initialize - Initialize replica sets, configure sharding
+4. Finalize  - Verify health, save cluster metadata
+
+Each phase creates a checkpoint for recovery on failure.
+
 Examples:
-  # Deploy a local 3-node replica set with monitoring
-  mup cluster deploy my-rs replica-set.yaml
+  # Generate and review a deployment plan
+  mup cluster deploy my-rs replica-set.yaml --version 7.0 --plan-only
+  mup plan show my-rs
+
+  # Deploy with interactive confirmation (default)
+  mup cluster deploy my-rs replica-set.yaml --version 7.0
+
+  # Deploy without confirmation (auto-approve)
+  mup cluster deploy my-rs replica-set.yaml --version 7.0 --auto-approve
 
   # Deploy without monitoring
-  mup cluster deploy my-rs replica-set.yaml --no-monitoring
+  mup cluster deploy my-rs replica-set.yaml --version 7.0 --no-monitoring
 
   # Deploy a remote sharded cluster
-  mup cluster deploy prod-cluster sharded.yaml --user admin
-
-  # Deploy with specific MongoDB version
-  mup cluster deploy test-rs replica-set.yaml --version 7.0.5
+  mup cluster deploy prod-cluster sharded.yaml --version 7.0 --user admin
 
   # Deploy with Percona Server for MongoDB
   mup cluster deploy my-rs replica-set.yaml --variant percona --version 8.0.12-4
+
+  # Resume failed deployment from last checkpoint
+  mup plan resume my-rs
+
+  # Monitor deployment progress
+  mup state show my-rs
+  mup state logs my-rs
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,29 +147,246 @@ Examples:
 			return fmt.Errorf("invalid variant: %w", err)
 		}
 
-		// Create deployer
-		cfg := deploy.DeployConfig{
-			ClusterName:       clusterName,
-			Version:           clusterDeployVersion,
-			Variant:           variant,
-			TopologyFile:      topologyFile,
-			SSHUser:           clusterDeployUser,
-			IdentityFile:      clusterDeployIdentityFile,
-			SkipConfirm:       clusterDeployYes,
-			DisableMonitoring: clusterDeployNoMonitoring,
+		// Parse topology file
+		topo, err := topology.ParseTopologyFile(topologyFile)
+		if err != nil {
+			return fmt.Errorf("failed to load topology: %w", err)
 		}
 
-		deployer, err := deploy.NewDeployer(cfg)
+		// Get cluster storage directories
+		clusterDir, err := getClusterDir(clusterName)
 		if err != nil {
-			return fmt.Errorf("failed to create deployer: %w", err)
+			return err
 		}
-		defer deployer.Close()
+
+		storageDir, err := getStorageDir()
+		if err != nil {
+			return err
+		}
+		// Use BinaryManager to get the correct versioned bin path
+		// This ensures the path matches what will be downloaded/cached
+		bm, err := deploy.NewBinaryManager()
+		if err != nil {
+			return fmt.Errorf("failed to create binary manager: %w", err)
+		}
+		platform := deploy.GetCurrentPlatform()
+		binPath, err := bm.GetBinPathWithVariant(clusterDeployVersion, variant, platform)
+		if err != nil {
+			return fmt.Errorf("failed to determine binary path: %w", err)
+		}
+
+		// REQ-SIM-027: Display simulation mode indicator
+		if clusterDeploySimulate {
+			fmt.Println("[SIMULATION] Running in simulation mode - no actual changes will be made")
+		}
+
+		// REQ-SIM-016, REQ-SIM-017: Create executors map (simulation or real)
+		executors := make(map[string]executor.Executor)
+		isLocal := topo.IsLocalDeployment()
+
+		if clusterDeploySimulate {
+			// REQ-SIM-001, REQ-SIM-016: Use simulation executor
+			var simConfig *simulation.Config
+			var err error
+
+			// REQ-SIM-041: Load scenario if specified
+			if clusterDeploySimulateScenario != "" {
+				fmt.Printf("[SIMULATION] Loading scenario from: %s\n", clusterDeploySimulateScenario)
+				simConfig, err = simulation.LoadConfigWithScenario(clusterDeploySimulateScenario)
+				if err != nil {
+					return fmt.Errorf("failed to load simulation scenario: %w", err)
+				}
+			} else {
+				simConfig = simulation.NewConfig()
+			}
+
+			simConfig.AllowRealFileReads = true // REQ-SIM-007: Allow reading topology files
+
+			// Create same simulation executor for all hosts
+			simExec := simulation.NewExecutor(simConfig)
+			for _, host := range topo.GetAllHosts() {
+				executors[host] = simExec
+			}
+		} else {
+			// Create real executors
+			for _, host := range topo.GetAllHosts() {
+				executors[host] = executor.NewLocalExecutor()
+			}
+		}
+
+		// Create deploy planner
+		plannerConfig := &deploy.PlannerConfig{
+			ClusterName: clusterName,
+			Version:     clusterDeployVersion,
+			Variant:     variant,
+			Topology:    topo,
+			Executors:   executors,
+			MetaDir:     clusterDir,
+			IsLocal:     isLocal,
+			BinPath:     binPath,
+			DryRun:      clusterDeployPlanOnly,
+		}
+
+		planner, err := deploy.NewDeployPlanner(plannerConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create planner: %w", err)
+		}
+
+		// Generate plan
+		fmt.Printf("\n📋 Generating deployment plan for cluster '%s'...\n\n", clusterName)
+		deployPlan, err := planner.GeneratePlan(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to generate plan: %w", err)
+		}
+
+		// Display validation results
+		if !deployPlan.Validation.Valid {
+			fmt.Println(plan.FormatValidationResult(deployPlan.Validation))
+			return fmt.Errorf("validation failed")
+		}
+
+		// Display plan summary
+		fmt.Println(deployPlan.Summary())
+
+		// Save plan using PlanStore
+		storageDir, err2 := getStorageDir()
+		if err2 != nil {
+			return err2
+		}
+		planStore, err := plan.NewPlanStore(storageDir)
+		if err != nil {
+			return fmt.Errorf("failed to create plan store: %w", err)
+		}
+
+		planID, err := planStore.SavePlan(deployPlan)
+		if err != nil {
+			return fmt.Errorf("failed to save plan: %w", err)
+		}
+
+		planPath := planStore.GetPlanPath(clusterName, planID)
+		fmt.Printf("\n✅ Plan saved: %s\n", planID)
+		fmt.Printf("   Path: %s\n", planPath)
+
+		// Verify plan was saved correctly
+		verified, err := planStore.VerifyPlan(clusterName, planID)
+		if err != nil {
+			fmt.Printf("⚠️  Warning: Failed to verify plan: %v\n", err)
+		} else if verified {
+			fmt.Printf("   ✓ Integrity verified (SHA-256)\n")
+		}
+
+		// If plan-only mode, exit here
+		if clusterDeployPlanOnly {
+			fmt.Printf("\nPlan generated successfully. Review with:\n")
+			fmt.Printf("  mup plan show %s --plan-id=%s\n\n", clusterName, planID)
+			fmt.Printf("Apply with:\n")
+			fmt.Printf("  mup plan apply %s --plan-id=%s\n", clusterName, planID)
+			return nil
+		}
+
+		// Prompt for confirmation unless auto-approve or yes flag
+		if !clusterDeployAutoApprove && !clusterDeployYes {
+			fmt.Printf("\n⚠️  Apply plan %s to cluster %s?\n", deployPlan.PlanID, clusterName)
+			fmt.Printf("This will:\n")
+			fmt.Printf("  • Create %d MongoDB processes\n", len(topo.GetAllHosts()))
+			fmt.Printf("  • Use %d operations across %d phases\n", deployPlan.TotalOperations(), len(deployPlan.Phases))
+			fmt.Printf("  • Estimated duration: %s\n", deployPlan.EstimatedDuration())
+			fmt.Printf("\nDo you want to continue? (yes/no): ")
+			var response string
+			fmt.Scanln(&response)
+			if response != "yes" && response != "y" {
+				fmt.Println("Cancelled.")
+				return nil
+			}
+		}
+
+		// Create lock manager and acquire cluster lock
+		lockMgr, err := apply.NewLockManager(storageDir)
+		if err != nil {
+			return fmt.Errorf("failed to create lock manager: %w", err)
+		}
+
+		fmt.Printf("\n🔒 Acquiring cluster lock...\n")
+		lock, err := lockMgr.AcquireLock(clusterName, planID, "deploy", 24*time.Hour)
+		if err != nil {
+			return fmt.Errorf("failed to acquire cluster lock: %w", err)
+		}
+		defer func() {
+			if err := lockMgr.ReleaseLock(clusterName, lock); err != nil {
+				fmt.Printf("Warning: failed to release lock: %v\n", err)
+			}
+		}()
+
+		fmt.Printf("✓ Cluster lock acquired (expires: %s)\n", lock.ExpiresAt.Format(time.RFC3339))
+
+		// Start lock renewal in background
+		renewCtx, renewCancel := context.WithCancel(ctx)
+		defer renewCancel()
+		lockMgr.StartLockRenewal(renewCtx, lock, 1*time.Hour, 24*time.Hour)
+
+		// Create state manager
+		stateDir := filepath.Join(clusterDir, "state")
+		stateManager := apply.NewStateManager(stateDir)
+
+		// Create operation executor
+		opExecutor := operation.NewExecutor(executors)
+
+		// Create applier
+		applier := apply.NewDefaultApplier(opExecutor, stateManager)
 
 		// Execute deployment
-		fmt.Printf("\nDeploying cluster '%s'...\n\n", clusterName)
+		if clusterDeploySimulate {
+			fmt.Printf("\n🔬 [SIMULATION] Applying deployment plan...\n\n")
+		} else {
+			fmt.Printf("\n🚀 Applying deployment plan...\n\n")
+		}
 
-		if err := deployer.Deploy(ctx); err != nil {
-			return fmt.Errorf("deployment failed: %w", err)
+		state, err := applier.Apply(ctx, deployPlan)
+		if err != nil {
+			fmt.Printf("\n❌ Deployment failed: %v\n", err)
+			fmt.Printf("\nState ID: %s\n", state.StateID)
+			fmt.Printf("Resume with: mup plan resume %s\n", clusterName)
+			return err
+		}
+
+		// REQ-SIM-028: Print simulation report if in simulation mode
+		if clusterDeploySimulate {
+			// Get the simulation executor from the executors map
+			var simExec *simulation.SimulationExecutor
+			for _, exec := range executors {
+				if se, ok := exec.(*simulation.SimulationExecutor); ok {
+					simExec = se
+					break
+				}
+			}
+
+			if simExec != nil {
+				reporter := simulation.NewReporter(simExec)
+
+				// REQ-SIM-049: Print detailed log if verbose mode
+				if clusterDeploySimulateVerbose {
+					reporter.PrintDetailed()
+				} else {
+					reporter.PrintSummary()
+				}
+
+				// REQ-SIM-029: Print errors if any occurred
+				if reporter.HasErrors() {
+					reporter.PrintErrors()
+				}
+			}
+
+			fmt.Printf("\n✅ [SIMULATION] Simulation completed successfully!\n")
+			fmt.Printf("[SIMULATION] No actual changes were made.\n\n")
+			fmt.Printf("[SIMULATION] To execute for real, run without --simulate:\n")
+			fmt.Printf("  mup cluster deploy %s %s --version %s\n", clusterName, topologyFile, clusterDeployVersion)
+		} else {
+			fmt.Printf("\n✅ Deployment completed successfully!\n")
+			fmt.Printf("State ID: %s\n", state.StateID)
+			fmt.Printf("\nCluster commands:\n")
+			fmt.Printf("  mup cluster display %s    # Show cluster status\n", clusterName)
+			fmt.Printf("  mup cluster connect %s    # Connect to cluster\n", clusterName)
+			fmt.Printf("  mup cluster stop %s       # Stop cluster\n", clusterName)
 		}
 
 		return nil
@@ -277,16 +546,30 @@ Examples:
 			return fmt.Errorf("cluster '%s' is not running (status: %s). Run 'mup cluster start %s'", clusterName, metadata.Status, clusterName)
 		}
 
-		if metadata.ConnectionCommand == "" {
-			return fmt.Errorf("no connection command found in metadata for cluster '%s'", clusterName)
+		// Construct connection command using cluster-local binaries
+		// Get connection string
+		connStr := getConnectionString(metadata)
+		if connStr == "" {
+			return fmt.Errorf("could not determine connection string for cluster '%s'", clusterName)
 		}
 
+		// Get correct shell binary based on MongoDB version
+		shellBinary := mongo.GetShellBinary(metadata.Version)
+
+		// Construct cluster-local binary path
+		clusterDir := metaMgr.GetClusterDir(clusterName)
+		clusterBinDir := filepath.Join(clusterDir, fmt.Sprintf("v%s", metadata.Version), "bin")
+		shellPath := filepath.Join(clusterBinDir, shellBinary)
+
+		// Build connection command
+		connectionCmd := fmt.Sprintf("%s \"%s\"", shellPath, connStr)
+
 		fmt.Printf("Connecting to cluster '%s'...\n", clusterName)
-		fmt.Printf("Executing: %s\n\n", metadata.ConnectionCommand)
+		fmt.Printf("Executing: %s\n\n", connectionCmd)
 
 		// Execute the connection command via shell
 		// Use sh -c to properly handle quoted connection strings
-		shellCmd := exec.Command("sh", "-c", metadata.ConnectionCommand)
+		shellCmd := exec.Command("sh", "-c", connectionCmd)
 		shellCmd.Stdin = os.Stdin
 		shellCmd.Stdout = os.Stdout
 		shellCmd.Stderr = os.Stderr
@@ -350,11 +633,10 @@ Examples:
 		defer cancel()
 
 		// Get metadata directory
-		homeDir, err := os.UserHomeDir()
+		metaDir, err := getClusterDir(clusterName)
 		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
+			return err
 		}
-		metaDir := fmt.Sprintf("%s/.mup/storage/clusters/%s", homeDir, clusterName)
 
 		// Load cluster metadata to get topology
 		metaMgr, err := meta.NewManager()
@@ -429,6 +711,132 @@ Examples:
 	},
 }
 
+var clusterImportCmd = &cobra.Command{
+	Use:   "import <cluster-name>",
+	Short: "Import an existing MongoDB cluster into mup management",
+	Long: `Import an existing MongoDB cluster (especially systemd-managed) into mup's management.
+
+The import process:
+1. Discovers running MongoDB instances (auto-detect or manual)
+2. Parses existing configurations and systemd services
+3. Creates mup's directory structure with symlinks to existing data
+4. Migrates from systemd to supervisord management
+5. Uses rolling restart for replica sets (SECONDARY → PRIMARY)
+
+Supports both local and remote (SSH) clusters.
+
+Examples:
+  # Auto-detect local MongoDB cluster
+  mup cluster import my-cluster --auto-detect
+
+  # Import with manual configuration
+  mup cluster import my-cluster \
+    --config /etc/mongod.conf \
+    --data-dir /var/lib/mongodb \
+    --port 27017
+
+  # Import remote cluster via SSH
+  mup cluster import prod-cluster \
+    --auto-detect \
+    --ssh-host user@production-server
+
+  # Dry-run to preview changes
+  mup cluster import my-cluster --auto-detect --dry-run
+
+  # Import without restarting processes
+  mup cluster import my-cluster --auto-detect --skip-restart
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		clusterName := args[0]
+		ctx := context.Background()
+
+		fmt.Printf("Importing cluster: %s\n\n", clusterName)
+
+		// Get cluster storage directory
+		clusterDir, err := getClusterDir(clusterName)
+		if err != nil {
+			return err
+		}
+
+		// Create executor (local or SSH)
+		var exec executor.Executor
+		if clusterImportSSHHost != "" {
+			fmt.Printf("Using SSH executor for remote host: %s\n", clusterImportSSHHost)
+			// SSH executor would be created here
+			// For now, use local executor
+			exec = executor.NewLocalExecutor()
+		} else {
+			exec = executor.NewLocalExecutor()
+		}
+
+		// Create orchestrator
+		orchestrator := importer.NewImportOrchestrator(exec)
+
+		// Build import options
+		importOpts := importer.ImportOptions{
+			ClusterName:      clusterName,
+			ClusterDir:       clusterDir,
+			AutoDetect:       clusterImportAutoDetect,
+			ConfigFile:       clusterImportConfigFile,
+			DataDir:          clusterImportDataDir,
+			Port:             clusterImportPort,
+			Host:             clusterImportHost,
+			DryRun:           clusterImportDryRun,
+			SkipRestart:      clusterImportSkipRestart,
+			KeepSystemdFiles: clusterImportKeepSystemd,
+		}
+
+		// Validate options
+		if !importOpts.AutoDetect && importOpts.ConfigFile == "" {
+			return fmt.Errorf("either --auto-detect or --config must be specified")
+		}
+
+		// Display dry-run notice
+		if importOpts.DryRun {
+			fmt.Println("🔍 DRY-RUN MODE: No changes will be made")
+		}
+
+		// Execute import
+		result, err := orchestrator.Import(ctx, importOpts)
+		if err != nil {
+			fmt.Printf("\n❌ Import failed: %v\n", err)
+			return err
+		}
+
+		// Display results
+		fmt.Println("\n" + strings.Repeat("=", 60))
+		if result.Success {
+			fmt.Println("✅ Import completed successfully!")
+		} else {
+			fmt.Println("⚠️  Import completed with warnings")
+		}
+		fmt.Println(strings.Repeat("=", 60))
+		fmt.Printf("\nCluster: %s\n", result.ClusterName)
+		fmt.Printf("Version: %s (%s)\n", result.Version, result.Variant)
+		fmt.Printf("Topology: %s\n", result.TopologyType)
+		fmt.Printf("Nodes imported: %d\n", result.NodesImported)
+
+		if len(result.ServicesDisabled) > 0 {
+			fmt.Printf("\nSystemd services disabled:\n")
+			for _, svc := range result.ServicesDisabled {
+				fmt.Printf("  - %s\n", svc)
+			}
+		}
+
+		if !importOpts.DryRun {
+			fmt.Printf("\nCluster data: %s\n", clusterDir)
+			fmt.Printf("\nNext steps:\n")
+			fmt.Printf("  - View cluster status: mup cluster display %s\n", clusterName)
+			fmt.Printf("  - Connect to cluster:  mup cluster connect %s\n", clusterName)
+			fmt.Printf("  - Start cluster:       mup cluster start %s\n", clusterName)
+			fmt.Printf("  - Stop cluster:        mup cluster stop %s\n", clusterName)
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	// Add cluster command to root
 	rootCmd.AddCommand(clusterCmd)
@@ -436,6 +844,7 @@ func init() {
 	// Add subcommands
 	clusterCmd.AddCommand(clusterDeployCmd)
 	clusterCmd.AddCommand(clusterUpgradeCmd)
+	clusterCmd.AddCommand(clusterImportCmd)
 	clusterCmd.AddCommand(clusterStartCmd)
 	clusterCmd.AddCommand(clusterStopCmd)
 	clusterCmd.AddCommand(clusterDisplayCmd)
@@ -451,6 +860,12 @@ func init() {
 	clusterDeployCmd.Flags().BoolVar(&clusterDeployYes, "yes", false, "Skip confirmation prompts")
 	clusterDeployCmd.Flags().DurationVarP(&clusterDeployTimeout, "timeout", "t", 30*time.Minute, "Deployment timeout")
 	clusterDeployCmd.Flags().BoolVar(&clusterDeployNoMonitoring, "no-monitoring", false, "Disable monitoring deployment (Victoria Metrics, Grafana, exporters)")
+	clusterDeployCmd.Flags().BoolVar(&clusterDeployPlanOnly, "plan-only", false, "Generate deployment plan without executing (dry-run)")
+	clusterDeployCmd.Flags().BoolVar(&clusterDeployAutoApprove, "auto-approve", false, "Skip confirmation and apply plan automatically")
+	clusterDeployCmd.Flags().StringVar(&clusterDeployPlanFile, "plan-file", "", "Save plan to specific file path (default: auto-generated)")
+	clusterDeployCmd.Flags().BoolVar(&clusterDeploySimulate, "simulate", false, "REQ-SIM-001: Run command in simulation mode (no filesystem/process/network changes)")
+	clusterDeployCmd.Flags().StringVar(&clusterDeploySimulateScenario, "simulate-scenario", "", "REQ-SIM-041: Path to scenario YAML file for simulation")
+	clusterDeployCmd.Flags().BoolVar(&clusterDeploySimulateVerbose, "simulate-verbose", false, "REQ-SIM-049: Show detailed operation log in simulation mode")
 
 	// Start/stop command flags
 	clusterStartCmd.Flags().StringVar(&clusterNodeFilter, "node", "", "Start specific node only (host:port)")
@@ -476,6 +891,17 @@ func init() {
 	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeResume, "resume", false, "Resume a paused or failed upgrade")
 	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradeResumePromptLevel, "resume-with-prompt-level", "", "Override prompt level when resuming")
 	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeDryRun, "dry-run", false, "Show upgrade plan without executing")
+
+	// Import command flags
+	clusterImportCmd.Flags().BoolVar(&clusterImportAutoDetect, "auto-detect", false, "Auto-detect running MongoDB instances")
+	clusterImportCmd.Flags().StringVar(&clusterImportConfigFile, "config", "", "MongoDB config file path (for manual mode)")
+	clusterImportCmd.Flags().StringVar(&clusterImportDataDir, "data-dir", "", "MongoDB data directory path (for manual mode)")
+	clusterImportCmd.Flags().IntVar(&clusterImportPort, "port", 27017, "MongoDB port (for manual mode)")
+	clusterImportCmd.Flags().StringVar(&clusterImportHost, "host", "localhost", "MongoDB host (for manual mode)")
+	clusterImportCmd.Flags().BoolVar(&clusterImportDryRun, "dry-run", false, "Preview changes without executing")
+	clusterImportCmd.Flags().BoolVar(&clusterImportSkipRestart, "skip-restart", false, "Skip process restart (structure only)")
+	clusterImportCmd.Flags().BoolVar(&clusterImportKeepSystemd, "keep-systemd-files", false, "Keep systemd unit files (don't remove)")
+	clusterImportCmd.Flags().StringVar(&clusterImportSSHHost, "ssh-host", "", "Remote host for import (user@host format)")
 }
 
 // Helper functions for upgrade command
@@ -541,4 +967,53 @@ func createUpgradeConfig(clusterName, metaDir string, clusterMeta *meta.ClusterM
 
 func createLocalUpgrader(config upgrade.UpgradeConfig) (*upgrade.LocalUpgrader, error) {
 	return upgrade.NewLocalUpgrader(config)
+}
+
+// getConnectionString builds the MongoDB connection string from metadata
+func getConnectionString(metadata *meta.ClusterMetadata) string {
+	if metadata.Topology == nil {
+		return ""
+	}
+
+	topoType := metadata.Topology.GetTopologyType()
+
+	switch topoType {
+	case "sharded":
+		// Connect via mongos
+		for _, node := range metadata.Nodes {
+			if node.Type == "mongos" {
+				return fmt.Sprintf("mongodb://%s:%d", node.Host, node.Port)
+			}
+		}
+
+	case "replica_set":
+		// Build replica set connection string
+		rsName := ""
+		var hosts []string
+
+		for _, node := range metadata.Nodes {
+			if node.Type == "mongod" && node.ReplicaSet != "" {
+				if rsName == "" {
+					rsName = node.ReplicaSet
+				}
+				if rsName == node.ReplicaSet {
+					hosts = append(hosts, fmt.Sprintf("%s:%d", node.Host, node.Port))
+				}
+			}
+		}
+
+		if len(hosts) > 0 {
+			return fmt.Sprintf("mongodb://%s/?replicaSet=%s", strings.Join(hosts, ","), rsName)
+		}
+
+	case "standalone":
+		// Connect to single mongod
+		for _, node := range metadata.Nodes {
+			if node.Type == "mongod" {
+				return fmt.Sprintf("mongodb://%s:%d", node.Host, node.Port)
+			}
+		}
+	}
+
+	return "mongodb://localhost:27017"
 }

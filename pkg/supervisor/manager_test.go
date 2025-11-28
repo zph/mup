@@ -151,16 +151,30 @@ func TestConfigGenerator_GenerateAll(t *testing.T) {
 	_, err = os.Stat(configPath)
 	require.NoError(t, err)
 
-	// Read and verify content includes all mongod programs
+	// Read main config and verify it includes all per-node configs
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-
 	configStr := string(content)
 
-	// Verify all mongod programs are included in the unified config
+	// Verify main config includes all per-node config files
 	for _, node := range topo.Mongod {
+		includePattern := fmt.Sprintf("mongod-%d/supervisor.conf", node.Port)
+		assert.Contains(t, configStr, includePattern, "Main config should include per-node config for %s:%d", node.Host, node.Port)
+	}
+
+	// Verify each per-node config file exists and contains the program definition
+	for _, node := range topo.Mongod {
+		nodeConfigPath := filepath.Join(tempDir, fmt.Sprintf("mongod-%d", node.Port), "supervisor.conf")
+		_, err = os.Stat(nodeConfigPath)
+		require.NoError(t, err, "Per-node config should exist for %s:%d", node.Host, node.Port)
+
+		// Read and verify the program definition is in the per-node config
+		nodeContent, err := os.ReadFile(nodeConfigPath)
+		require.NoError(t, err)
+		nodeConfigStr := string(nodeContent)
+
 		programName := fmt.Sprintf("[program:mongod-%d]", node.Port)
-		assert.Contains(t, configStr, programName, "Config should include program for %s:%d", node.Host, node.Port)
+		assert.Contains(t, nodeConfigStr, programName, "Per-node config should include program definition for %s:%d", node.Host, node.Port)
 	}
 }
 

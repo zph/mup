@@ -1,0 +1,20 @@
+# Simulation scenario: Port already in use
+# Tests handling of port conflicts during deployment
+# REQ-SIM-041, REQ-SIM-042
+
+simulation:
+  responses:
+    "mongod --version": "db version v7.0.5"
+    "systemctl status mongod": "inactive (dead)"
+    "lsof -i :27017": "mongod  1234 mongodb   6u  IPv4  TCP *:27017 (LISTEN)"
+
+  failures:
+    - operation: background
+      target: "mongod"
+      error: "bind: address already in use (port 27017)"
+
+  processes:
+    running:
+      - command: mongod
+        port: 27017
+        pid: 1234

@@ -127,6 +127,14 @@ func (e *LocalExecutor) ExecuteWithInput(command string, stdin io.Reader) (strin
 	return stdout.String(), nil
 }
 
+// MongoExecute runs a MongoDB driver command
+// For LocalExecutor, this is just informational (the actual driver work happens in Go)
+func (e *LocalExecutor) MongoExecute(host string, command string) (string, error) {
+	// MongoDB driver commands don't actually execute as shell commands
+	// This method exists for interface compliance and logging
+	return "", nil
+}
+
 // Background starts a command in the background and returns its PID
 func (e *LocalExecutor) Background(command string) (int, error) {
 	cmd := exec.Command("sh", "-c", command)

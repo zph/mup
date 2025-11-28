@@ -1,0 +1,21 @@
+# Simulation scenario: Disk full
+# Tests handling of insufficient disk space
+# REQ-SIM-041, REQ-SIM-042
+
+simulation:
+  responses:
+    "df -h /data": "/dev/sda1  100G  99.5G  500M  99% /data"
+    "df -h /var": "/dev/sda2   50G  49.9G  100M  99% /var"
+
+  failures:
+    - operation: upload_file
+      target: "/data/mongodb/mongod"
+      error: "write: no space left on device"
+
+    - operation: upload_content
+      target: "/var/log/mongodb/mongod.log"
+      error: "write: no space left on device"
+
+    - operation: create_directory
+      target: "/data/mongodb/data"
+      error: "mkdir: cannot create directory: No space left on device"

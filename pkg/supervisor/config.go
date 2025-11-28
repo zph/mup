@@ -38,15 +38,20 @@ func NewConfigGenerator(clusterDir, clusterName string, topo *topology.Topology,
 }
 
 // GenerateAll generates all supervisord configuration files
-// NOTE: We generate a single config file with all programs because the supervisord
-// library doesn't properly expand [include] glob patterns during Load()
+// REQ-PM-010: Creates per-node supervisor.conf in version-specific directories,
+// then a main supervisor.ini that includes them via [include] directive
 func (g *ConfigGenerator) GenerateAll() error {
-	// Generate single supervisor.ini with all programs included directly
-	if err := g.GenerateUnifiedConfig(); err != nil {
-		return fmt.Errorf("failed to generate unified config: %w", err)
+	// Step 1: Generate per-node supervisor.conf files
+	if err := g.GeneratePerNodeConfigs(); err != nil {
+		return fmt.Errorf("failed to generate per-node configs: %w", err)
 	}
 
-	// Generate convenience wrapper scripts
+	// Step 2: Generate main supervisor.ini with includes
+	if err := g.GenerateMainConfigWithIncludes(); err != nil {
+		return fmt.Errorf("failed to generate main config: %w", err)
+	}
+
+	// Step 3: Generate convenience wrapper scripts
 	if err := g.GenerateWrapperScripts(); err != nil {
 		return fmt.Errorf("failed to generate wrapper scripts: %w", err)
 	}
@@ -180,6 +185,173 @@ func (g *ConfigGenerator) getSupervisorHTTPPort() int {
 	// Map to port range 19000-19999 (1000 ports available)
 	port := 19000 + int(hash%1000)
 	return port
+}
+
+// GeneratePerNodeConfigs creates individual supervisor.conf for each node
+// REQ-PM-010: Each node gets its own supervisor.conf in its process directory
+func (g *ConfigGenerator) GeneratePerNodeConfigs() error {
+	// Generate configs for config servers
+	for _, node := range g.topology.ConfigSvr {
+		if err := g.generateNodeSupervisorConf("config", node.Host, node.Port, node.ReplicaSet, true); err != nil {
+			return err
+		}
+	}
+
+	// Generate configs for mongod nodes
+	for _, node := range g.topology.Mongod {
+		if err := g.generateNodeSupervisorConf("mongod", node.Host, node.Port, node.ReplicaSet, false); err != nil {
+			return err
+		}
+	}
+
+	// Generate configs for mongos routers
+	for _, node := range g.topology.Mongos {
+		if err := g.generateMongosNodeSupervisorConf(node.Host, node.Port); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// generateNodeSupervisorConf creates a supervisor.conf for a mongod/config server node
+func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port int, replicaSet string, isConfigSvr bool) error {
+	programName := fmt.Sprintf("%s-%d", nodeType, port)
+	processDir := filepath.Join(g.clusterDir, programName)
+	confPath := filepath.Join(processDir, "supervisor.conf")
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(confPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for %s: %w", confPath, err)
+	}
+
+	file, err := os.Create(confPath)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", confPath, err)
+	}
+	defer file.Close()
+
+	// Write program section
+	configPath := filepath.Join(processDir, "config", "mongod.conf")
+	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongod-%d.log", port))
+	dataDir := filepath.Join(g.clusterRoot, "data", fmt.Sprintf("%s-%d", host, port))
+	mongodPath := filepath.Join(g.binPath, "mongod")
+
+	fmt.Fprintf(file, "[program:%s]\n", programName)
+	fmt.Fprintf(file, "command = %s --config %s\n", mongodPath, configPath)
+	fmt.Fprintf(file, "directory = %s\n", dataDir)
+	fmt.Fprintf(file, "autostart = false\n")
+	fmt.Fprintf(file, "autorestart = unexpected\n")
+	fmt.Fprintf(file, "startsecs = 5\n")
+	fmt.Fprintf(file, "startretries = 3\n")
+	fmt.Fprintf(file, "stdout_logfile = %s\n", logFile)
+	fmt.Fprintf(file, "stderr_logfile = %s\n", logFile)
+	fmt.Fprintf(file, "stdout_logfile_maxbytes = 50MB\n")
+	fmt.Fprintf(file, "stdout_logfile_backups = 10\n")
+	fmt.Fprintf(file, "stopwaitsecs = 30\n")
+	fmt.Fprintf(file, "stopsignal = INT\n")
+	fmt.Fprintf(file, "environment = HOME=\"%s\",USER=\"%s\"\n", os.Getenv("HOME"), os.Getenv("USER"))
+	if replicaSet != "" {
+		fmt.Fprintf(file, "; Replica Set: %s\n", replicaSet)
+	}
+
+	return nil
+}
+
+// generateMongosNodeSupervisorConf creates a supervisor.conf for a mongos router
+func (g *ConfigGenerator) generateMongosNodeSupervisorConf(host string, port int) error {
+	programName := fmt.Sprintf("mongos-%d", port)
+	processDir := filepath.Join(g.clusterDir, programName)
+	confPath := filepath.Join(processDir, "supervisor.conf")
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(confPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for %s: %w", confPath, err)
+	}
+
+	file, err := os.Create(confPath)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", confPath, err)
+	}
+	defer file.Close()
+
+	// Write program section
+	configPath := filepath.Join(processDir, "config", "mongos.conf")
+	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongos-%d.log", port))
+	mongosPath := filepath.Join(g.binPath, "mongos")
+
+	fmt.Fprintf(file, "[program:%s]\n", programName)
+	fmt.Fprintf(file, "command = %s --config %s\n", mongosPath, configPath)
+	fmt.Fprintf(file, "autostart = false\n")
+	fmt.Fprintf(file, "autorestart = unexpected\n")
+	fmt.Fprintf(file, "startsecs = 5\n")
+	fmt.Fprintf(file, "startretries = 3\n")
+	fmt.Fprintf(file, "stdout_logfile = %s\n", logFile)
+	fmt.Fprintf(file, "stderr_logfile = %s\n", logFile)
+	fmt.Fprintf(file, "stdout_logfile_maxbytes = 50MB\n")
+	fmt.Fprintf(file, "stdout_logfile_backups = 10\n")
+	fmt.Fprintf(file, "stopwaitsecs = 30\n")
+	fmt.Fprintf(file, "stopsignal = INT\n")
+	fmt.Fprintf(file, "environment = HOME=\"%s\",USER=\"%s\"\n", os.Getenv("HOME"), os.Getenv("USER"))
+
+	return nil
+}
+
+// GenerateMainConfigWithIncludes creates supervisor.ini with [include] directives
+// REQ-PM-010: Main config includes all per-node configs via relative paths
+func (g *ConfigGenerator) GenerateMainConfigWithIncludes() error {
+	configPath := filepath.Join(g.clusterDir, "supervisor.ini")
+	file, err := os.Create(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to create config file: %w", err)
+	}
+	defer file.Close()
+
+	// Write main supervisord section
+	fmt.Fprintf(file, "[supervisord]\n")
+	fmt.Fprintf(file, "logfile = %s\n", filepath.Join(g.clusterDir, "supervisor.log"))
+	fmt.Fprintf(file, "loglevel = info\n")
+	fmt.Fprintf(file, "pidfile = %s\n", filepath.Join(g.clusterDir, "supervisor.pid"))
+	fmt.Fprintf(file, "nodaemon = false\n")
+	fmt.Fprintf(file, "identifier = %s\n\n", g.clusterName)
+
+	// Write HTTP server section
+	httpPort := g.getSupervisorHTTPPort()
+	fmt.Fprintf(file, "[inet_http_server]\n")
+	fmt.Fprintf(file, "port = 127.0.0.1:%d\n\n", httpPort)
+
+	// Write include section with all per-node configs
+	fmt.Fprintf(file, "[include]\n")
+	fmt.Fprintf(file, "files = ")
+
+	// Add all node configs to include list
+	var includes []string
+
+	for _, node := range g.topology.ConfigSvr {
+		includes = append(includes, fmt.Sprintf("config-%d/supervisor.conf", node.Port))
+	}
+
+	for _, node := range g.topology.Mongod {
+		includes = append(includes, fmt.Sprintf("mongod-%d/supervisor.conf", node.Port))
+	}
+
+	for _, node := range g.topology.Mongos {
+		includes = append(includes, fmt.Sprintf("mongos-%d/supervisor.conf", node.Port))
+	}
+
+	// Add monitoring config
+	includes = append(includes, "monitoring-supervisor.ini")
+
+	// Write all includes (space-separated for supervisord)
+	for i, inc := range includes {
+		if i > 0 {
+			fmt.Fprintf(file, " ")
+		}
+		fmt.Fprintf(file, "%s", inc)
+	}
+	fmt.Fprintf(file, "\n")
+
+	return nil
 }
 
 // GenerateMainConfig generates the main supervisor.ini file
@@ -367,6 +539,7 @@ environment = HOME="{{.HomeDir}}",USER="{{.User}}"
 `
 
 // GenerateWrapperScripts generates convenience start/stop scripts in per-process directories
+// and a supervisorctl wrapper in the cluster's main bin directory
 func (g *ConfigGenerator) GenerateWrapperScripts() error {
 	// Get supervisor binary path
 	homeDir, err := os.UserHomeDir()
@@ -379,6 +552,16 @@ func (g *ConfigGenerator) GenerateWrapperScripts() error {
 	configPath := filepath.Join(g.clusterDir, "supervisor.ini")
 	httpPort := g.getSupervisorHTTPPort()
 	serverURL := fmt.Sprintf("http://localhost:%d", httpPort)
+
+	// Generate supervisorctl wrapper in cluster's main bin directory
+	clusterBinDir := filepath.Join(g.clusterDir, "bin")
+	if err := os.MkdirAll(clusterBinDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cluster bin directory: %w", err)
+	}
+
+	if err := g.generateSupervisorctlWrapper(clusterBinDir, supervisorBin, configPath, serverURL); err != nil {
+		return fmt.Errorf("failed to generate supervisorctl wrapper: %w", err)
+	}
 
 	// Generate per-node scripts for mongod
 	for _, node := range g.topology.Mongod {
@@ -493,6 +676,30 @@ SERVER_URL="%s"
 	statusPath := filepath.Join(binDir, "status")
 	if err := os.WriteFile(statusPath, []byte(statusScript), 0755); err != nil {
 		return fmt.Errorf("failed to write status script: %w", err)
+	}
+
+	return nil
+}
+
+// generateSupervisorctlWrapper creates a supervisorctl wrapper in the cluster's bin directory
+// that automatically uses the correct config and server URL for this cluster
+func (g *ConfigGenerator) generateSupervisorctlWrapper(binDir, supervisorBin, configPath, serverURL string) error {
+	// The supervisorctl command is: supervisord ctl -c <config> -s <server_url> <args...>
+	supervisorctlScript := fmt.Sprintf(`#!/bin/bash
+# Auto-generated supervisorctl wrapper for cluster %s
+# This script automatically connects to the correct supervisor instance
+
+SUPERVISOR_BIN="%s"
+SUPERVISOR_CONFIG="%s"
+SERVER_URL="%s"
+
+# Pass all arguments to supervisorctl
+exec "$SUPERVISOR_BIN" ctl -c "$SUPERVISOR_CONFIG" -s "$SERVER_URL" "$@"
+`, g.clusterName, supervisorBin, configPath, serverURL)
+
+	supervisorctlPath := filepath.Join(binDir, "supervisorctl")
+	if err := os.WriteFile(supervisorctlPath, []byte(supervisorctlScript), 0755); err != nil {
+		return fmt.Errorf("failed to write supervisorctl wrapper: %w", err)
 	}
 
 	return nil

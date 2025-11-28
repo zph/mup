@@ -1,0 +1,88 @@
+# golangci-lint configuration
+# See https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - bin
+    - test/docker
+
+linters:
+  enable:
+    # Error checking - catches ignored errors
+    - errcheck          # Checks that you check all errors
+    - errorlint         # Suggests wrapping of errors
+    
+    # General code quality
+    - gofmt             # Checks whether code was gofmt-ed
+    - goimports         # Checks import statements
+    - govet             # Reports suspicious constructs
+    - staticcheck       # Static analysis (includes error checking)
+    - unused            # Checks for unused constants, variables, functions and types
+    - ineffassign       # Detects ineffectual assignments
+    - gosimple          # Simplifies code
+    
+    # Style and best practices
+    - gosec             # Inspects source code for security problems
+    - unconvert         # Remove unnecessary type conversions
+    - unparam           # Reports unused function parameters
+
+linters-settings:
+  errcheck:
+    # Check for ignored errors
+    check-type-assertions: true
+    check-blank: true
+    # Ignore these functions (add as needed)
+    ignore: |
+      fmt\.(Print|Printf|Println|Fprint|Fprintf|Fprintln)
+      os\.(Remove|RemoveAll|Chmod|Chown|Chtimes|Mkdir|MkdirAll|Truncate)
+      io\.(Close|Write|WriteString)
+      \(\*bytes\.Buffer\)\.(Write|WriteString)
+      \(\*strings\.Builder\)\.(Write|WriteString)
+  
+  errorlint:
+    # Check for error type assertions
+    errorf: true
+    asserts: true
+    comparison: true
+  
+  gosec:
+    # Security checks
+    severity: medium
+    confidence: medium
+    # Exclude some common false positives
+    excludes:
+      - G104  # Errors unhandled (we use errcheck for this)
+      - G204  # Subprocess launched with variable (needed for exec)
+
+issues:
+  # Maximum issues count per one linter
+  max-issues-per-linter: 50
+  max-same-issues: 50
+  
+  # Exclude some common false positives
+  exclude-rules:
+    # Allow errors in test files for some cases
+    - path: _test\.go
+      linters:
+        - errcheck
+      text: "Error return value of .* is not checked"
+  
+  # Exclude some directories from specific linters
+  exclude-dirs:
+    - vendor
+    - bin
+    - test/docker
+
+output:
+  # Colored output
+  colored: true
+  
+  # Print linter name in issue line
+  print-issued-lines: true
+  print-linter-name: true
+  
+  # Format: colored-line-number | tab | checkstyle | json | junit | github-actions
+  format: colored-line-number

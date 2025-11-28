@@ -1,0 +1,20 @@
+# Simulation scenario: Network failure
+# Tests handling of network connectivity issues
+# REQ-SIM-041, REQ-SIM-042
+
+simulation:
+  responses:
+    "ping -c 1 mongodb-host": "ping: mongodb-host: Name or service not known"
+
+  failures:
+    - operation: execute
+      target: "systemctl status mongod"
+      error: "ssh: connect to host mongodb-host port 22: Connection refused"
+
+    - operation: upload_file
+      target: "*"
+      error: "ssh: connect to host mongodb-host port 22: No route to host"
+
+    - operation: download_file
+      target: "*"
+      error: "ssh: connect to host mongodb-host port 22: Network is unreachable"

@@ -1,4 +1,4 @@
-.PHONY: all build clean test install help docker-ssh-image test-ssh test-ssh-short
+.PHONY: all build clean test install help docker-ssh-image test-ssh test-ssh-short deps fmt lint lint-ci check
 
 # Binary output directory
 BIN_DIR := ./bin
@@ -27,6 +27,7 @@ build:
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
+	@rm -rf test/bin/$(BINARY_NAME)
 	@echo "✓ Cleaned"
 
 ## test: Run tests (excluding integration tests that download binaries)
@@ -67,18 +68,51 @@ test-all: docker-ssh-image
 	@echo "Running all tests including SSH integration tests..."
 	$(GOTEST) -v ./...
 
+## test-e2e: Run end-to-end tests against actual binary
+test-e2e: build
+	@echo "Running end-to-end tests..."
+	@echo "Building test binary to test/bin/mup..."
+	@mkdir -p test/bin
+	$(GOBUILD) -o test/bin/$(BINARY_NAME) ./cmd/mup
+	@echo "Running E2E tests..."
+	$(GOTEST) -v -tags=e2e ./test/e2e/...
+	@echo "✓ E2E tests complete"
+
+## test-e2e-verbose: Run E2E tests with verbose output
+test-e2e-verbose: build
+	@echo "Running end-to-end tests (verbose)..."
+	@mkdir -p test/bin
+	$(GOBUILD) -o test/bin/$(BINARY_NAME) ./cmd/mup
+	$(GOTEST) -v -tags=e2e ./test/e2e/... -test.v
+	@echo "✓ E2E tests complete"
+
+## test-complete: Run all test suites (unit, integration, e2e, ssh)
+test-complete: test-integration test-e2e test-ssh
+	@echo "✓ All test suites passed"
+
 ## install: Install mup to $GOPATH/bin
 install:
 	@echo "Installing $(BINARY_NAME)..."
 	$(GOINSTALL) ./cmd/mup
 	@echo "✓ Installed $(BINARY_NAME)"
 
-## deps: Download and tidy dependencies
+## deps: Download and tidy dependencies, install development tools
 deps:
 	@echo "Downloading dependencies..."
 	$(GOMOD) download
 	$(GOMOD) tidy
 	@echo "✓ Dependencies updated"
+	@echo ""
+	@echo "Installing development tools..."
+	@echo "Installing golangci-lint..."
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Installing gotestsum..."
+	@go install gotest.tools/gotestsum@latest
+	@echo "✓ Development tools installed"
+	@echo ""
+	@echo "Verify installation:"
+	@golangci-lint --version || echo "  ✗ golangci-lint not found"
+	@gotestsum --version || echo "  ✗ gotestsum not found"
 
 ## fmt: Format code
 fmt:
@@ -86,13 +120,7 @@ fmt:
 	$(GOCMD) fmt ./...
 	@echo "✓ Code formatted"
 
-## vet: Run go vet
-vet:
-	@echo "Running go vet..."
-	$(GOCMD) vet ./...
-	@echo "✓ Vet complete"
-
-## lint: Run golangci-lint (requires golangci-lint installed)
+## lint: Run golangci-lint (includes go vet and errcheck)
 lint:
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
@@ -100,7 +128,18 @@ lint:
 		echo "✓ Lint complete"; \
 	else \
 		echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+		exit 1; \
 	fi
+
+## lint-ci: Run linter in CI mode (fails on errors, no install check)
+lint-ci:
+	@echo "Running linter (CI mode)..."
+	golangci-lint run ./...
+	@echo "✓ Lint complete"
+
+## check: Run all checks (lint includes vet and errcheck)
+check: lint
+	@echo "✓ All checks passed"
 
 ## run: Build and run playground start command
 run: build

@@ -3,12 +3,14 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/zph/mup/pkg/cluster/health"
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/mongo"
 )
 
 // Display shows cluster information
@@ -119,11 +121,15 @@ func (m *Manager) displayText(metadata *meta.ClusterMetadata) error {
 	fmt.Println("CONNECTION")
 	fmt.Println(strings.Repeat("━", 70))
 	connStr := m.getConnectionString(metadata)
+	shellBinary := mongo.GetShellBinary(metadata.Version)
+
+	// Construct cluster-local binary path
+	clusterDir := m.metaMgr.GetClusterDir(metadata.Name)
+	clusterBinDir := filepath.Join(clusterDir, fmt.Sprintf("v%s", metadata.Version), "bin")
+	shellPath := filepath.Join(clusterBinDir, shellBinary)
+
 	fmt.Printf("%s\n", connStr)
-	fmt.Printf("\nTo connect:\n  mongosh \"%s\"\n", connStr)
-	if metadata.ConnectionCommand != "" {
-		fmt.Printf("\nOr use:\n  %s\n", metadata.ConnectionCommand)
-	}
+	fmt.Printf("\nTo connect:\n  %s \"%s\"\n", shellPath, connStr)
 
 	// Display management commands
 	fmt.Println("\n" + strings.Repeat("━", 70))

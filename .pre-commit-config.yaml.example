@@ -1,0 +1,38 @@
+# Pre-commit hook configuration example
+# To use this, install pre-commit: pip install pre-commit
+# Then run: pre-commit install
+# 
+# This ensures errors are checked before commits
+
+repos:
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.60.0
+    hooks:
+      - id: golangci-lint
+        args: [--timeout=5m]
+        # Only run on Go files
+        types: [go]
+        # Fail on any issues
+        pass_filenames: false
+        # Run on entire repo
+        entry: golangci-lint run ./...
+
+  - repo: https://github.com/kisielk/errcheck
+    rev: v1.7.0
+    hooks:
+      - id: errcheck
+        args: [-ignoretests, -blank, -asserts]
+        types: [go]
+
+  - repo: https://github.com/pre-commit/mirrors-goimports
+    rev: v0.1.5
+    hooks:
+      - id: goimports
+        args: [-w]
+        types: [go]
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-vet
+        types: [go]

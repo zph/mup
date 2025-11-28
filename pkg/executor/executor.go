@@ -23,6 +23,9 @@ type Executor interface {
 	ExecuteWithInput(command string, stdin io.Reader) (output string, err error)
 	Background(command string) (pid int, err error)
 
+	// MongoDB Operations (for tracking in simulation)
+	MongoExecute(host string, command string) (output string, err error)
+
 	// Process Management
 	IsProcessRunning(pid int) (bool, error)
 	KillProcess(pid int) error

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/mongo"
 	"github.com/zph/mup/pkg/topology"
 )
 
@@ -265,9 +265,10 @@ func (d *Deployer) displayClusterInfo() {
 
 	// Display connection instructions
 	connectionString := d.getConnectionString()
+	shellBinary := mongo.GetShellBinary(d.version)
 	fmt.Printf("Connection URI: %s\n", connectionString)
 	fmt.Printf("\nTo connect:\n")
-	fmt.Printf("  mongosh \"%s\"\n", connectionString)
+	fmt.Printf("  %s \"%s\"\n", shellBinary, connectionString)
 
 	fmt.Println("\nManagement:")
 	fmt.Println(repeatString("-", 60))
@@ -327,32 +328,15 @@ func (d *Deployer) getConnectionString() string {
 
 // getConnectionCommand builds the command to connect to the cluster
 func (d *Deployer) getConnectionCommand(connectionString string) string {
-	// Use mongosh from BinPath for MongoDB >= 4.0, mongo for older versions
-	// The command will be executed via shell, so we need to quote the connection string
-	v, err := version.NewVersion(d.version)
-	if err != nil {
-		// If version parsing fails, default to mongosh from BinPath
-		mongoshPath := filepath.Join(d.binPath, "mongosh")
-		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
-	}
+	// Use cluster-local binary from versioned bin directory
+	// Get the correct shell binary based on MongoDB version
+	shellBinary := mongo.GetShellBinary(d.version)
 
-	// Check if version is >= 4.0
-	constraint, err := version.NewConstraint(">= 4.0")
-	if err != nil {
-		// If constraint parsing fails, default to mongosh from BinPath
-		mongoshPath := filepath.Join(d.binPath, "mongosh")
-		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
-	}
+	// Use cluster-local versioned bin directory: <cluster_dir>/v<version>/bin/
+	clusterBinDir := filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), "bin")
+	shellPath := filepath.Join(clusterBinDir, shellBinary)
 
-	if constraint.Check(v) {
-		// MongoDB >= 4.0: use mongosh from BinPath
-		mongoshPath := filepath.Join(d.binPath, "mongosh")
-		return fmt.Sprintf("%s \"%s\"", mongoshPath, connectionString)
-	}
-
-	// MongoDB < 4.0: use mongo from BinPath
-	mongoPath := filepath.Join(d.binPath, "mongo")
-	return fmt.Sprintf("%s \"%s\"", mongoPath, connectionString)
+	return fmt.Sprintf("%s \"%s\"", shellPath, connectionString)
 }
 
 // repeatString creates a string by repeating a character n times

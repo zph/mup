@@ -1,0 +1,39 @@
+# Simulation scenario: Existing cluster
+# Tests import of an already-running MongoDB cluster
+# REQ-SIM-041, REQ-SIM-025
+
+simulation:
+  responses:
+    "mongod --version": "db version v6.0.12"
+    "systemctl status mongod": "active (running) since Mon 2025-01-15 10:00:00"
+    "pgrep mongod": "1234\n5678\n9012"
+    "ps aux | grep mongod": |
+      mongodb  1234  0.5  2.0  mongod --config /etc/mongod-27017.conf
+      mongodb  5678  0.5  2.0  mongod --config /etc/mongod-27018.conf
+      mongodb  9012  0.5  2.0  mongod --config /etc/mongod-27019.conf
+
+  filesystem:
+    existing_files:
+      - /etc/mongod-27017.conf
+      - /etc/mongod-27018.conf
+      - /etc/mongod-27019.conf
+      - /etc/systemd/system/mongod-27017.service
+      - /etc/systemd/system/mongod-27018.service
+      - /etc/systemd/system/mongod-27019.service
+    existing_directories:
+      - /var/lib/mongodb-27017
+      - /var/lib/mongodb-27018
+      - /var/lib/mongodb-27019
+      - /var/log/mongodb
+
+  processes:
+    running:
+      - command: mongod
+        port: 27017
+        pid: 1234
+      - command: mongod
+        port: 27018
+        pid: 5678
+      - command: mongod
+        port: 27019
+        pid: 9012

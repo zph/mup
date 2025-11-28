@@ -9,29 +9,34 @@ import (
 
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/monitoring"
+	"github.com/zph/mup/pkg/paths"
 	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/template"
 	"github.com/zph/mup/pkg/topology"
 )
 
 // Deployer manages the deployment of MongoDB clusters
+// REQ-PM-022: Uses PathResolver and ClusterLayout for consistent path management
 type Deployer struct {
-	clusterName    string
-	version        string
-	variant        Variant                      // MongoDB variant
-	topology       *topology.Topology
-	executors      map[string]executor.Executor // host -> executor
-	metaDir        string                       // cluster metadata directory
-	isLocal        bool                         // local vs remote deployment
-	binPath        string                       // Path to MongoDB binaries (from binary manager)
-	templateMgr    *template.Manager            // Template manager for config generation
-	supervisorMgr  *supervisor.Manager          // Supervisor manager for process management
-	monitoringMgr  *monitoring.Manager          // Monitoring manager
-	monitoringEnabled bool                      // Whether monitoring is enabled
+	clusterName       string
+	version           string
+	variant           Variant                      // MongoDB variant
+	topology          *topology.Topology
+	executors         map[string]executor.Executor // host -> executor
+	metaDir           string                       // cluster metadata directory
+	isLocal           bool                         // local vs remote deployment
+	binPath           string                       // Path to MongoDB binaries (from binary manager)
+	templateMgr       *template.Manager            // Template manager for config generation
+	supervisorMgr     *supervisor.Manager          // Supervisor manager for process management
+	monitoringMgr     *monitoring.Manager          // Monitoring manager
+	monitoringEnabled bool                         // Whether monitoring is enabled
+	layout            *paths.ClusterLayout         // REQ-PM-009 to REQ-PM-015: Cluster directory layout manager
+	pathResolver      *paths.LocalPathResolver     // REQ-PM-001 to REQ-PM-003: Path resolution for deployment mode
 }
 
 // NewConfigRegenerator creates a minimal Deployer for config file regeneration during upgrades
 // This is used by the upgrade package to regenerate configs for the new version
+// REQ-PM-022: Initializes PathResolver and ClusterLayout
 func NewConfigRegenerator(clusterName, version string, variant Variant, topo *topology.Topology, metaDir, binPath string) (*Deployer, error) {
 	tmplMgr, err := template.NewManager()
 	if err != nil {
@@ -40,16 +45,24 @@ func NewConfigRegenerator(clusterName, version string, variant Variant, topo *to
 
 	localExec := executor.NewLocalExecutor()
 
+	// REQ-PM-009 to REQ-PM-015: Initialize cluster layout manager
+	layout := paths.NewClusterLayout(metaDir)
+
+	// REQ-PM-002: Initialize local path resolver for local deployment
+	pathResolver := paths.NewLocalPathResolver(metaDir, version)
+
 	return &Deployer{
-		clusterName: clusterName,
-		version:     version,
-		variant:     variant,
-		topology:    topo,
-		executors:   map[string]executor.Executor{"localhost": localExec},
-		metaDir:     metaDir,
-		isLocal:     true,
-		binPath:     binPath,
-		templateMgr: tmplMgr,
+		clusterName:  clusterName,
+		version:      version,
+		variant:      variant,
+		topology:     topo,
+		executors:    map[string]executor.Executor{"localhost": localExec},
+		metaDir:      metaDir,
+		isLocal:      true,
+		binPath:      binPath,
+		templateMgr:  tmplMgr,
+		layout:       layout,
+		pathResolver: pathResolver,
 	}, nil
 }
 
@@ -168,6 +181,13 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		fmt.Println("✓ Monitoring disabled (--no-monitoring)")
 	}
 
+	// REQ-PM-009 to REQ-PM-015: Initialize cluster layout manager
+	layout := paths.NewClusterLayout(metaDir)
+
+	// REQ-PM-002: Initialize local path resolver for local deployment
+	// TODO: For remote deployment, use RemotePathResolver with topology global config
+	pathResolver := paths.NewLocalPathResolver(metaDir, cfg.Version)
+
 	fmt.Println("✓ Phase 1 complete: Topology validated")
 
 	return &Deployer{
@@ -182,6 +202,8 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		supervisorMgr:     supervisorMgr,
 		monitoringMgr:     monitoringMgr,
 		monitoringEnabled: monitoringEnabled,
+		layout:            layout,
+		pathResolver:      pathResolver,
 	}, nil
 }
 
