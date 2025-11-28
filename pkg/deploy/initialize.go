@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/zph/mup/pkg/logger"
+	"github.com/zph/mup/pkg/naming"
 )
 
 // initialize implements Phase 4: Initialize
@@ -132,7 +133,7 @@ func (d *Deployer) waitForNode(ctx context.Context, host string, port int, deadl
 
 		// Try to find and read the log file
 		logDir := d.getNodeLogDir(host, port, "")
-		logFile := filepath.Join(logDir, "mongod.log")
+		logFile := filepath.Join(logDir, naming.GetLogFileName())
 
 		if content, err := os.ReadFile(logFile); err == nil {
 			// Print last 30 lines of log
@@ -206,6 +207,16 @@ type ReplicaSetMember struct {
 	Votes    int
 }
 
+// normalizeHost converts localhost to 127.0.0.1 to avoid IPv6 resolution issues
+// The MongoDB Go driver resolves "localhost" to IPv6 ([::1]) by default, but mongod
+// processes typically only listen on IPv4. This normalization ensures connections use IPv4.
+func normalizeHost(host string) string {
+	if host == "localhost" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
 // collectReplicaSets collects all replica sets from the topology
 func (d *Deployer) collectReplicaSets() map[string][]ReplicaSetMember {
 	replicaSets := make(map[string][]ReplicaSetMember)
@@ -214,7 +225,7 @@ func (d *Deployer) collectReplicaSets() map[string][]ReplicaSetMember {
 	for _, node := range d.topology.Mongod {
 		if node.ReplicaSet != "" {
 			member := ReplicaSetMember{
-				Host:     node.Host,
+				Host:     normalizeHost(node.Host),
 				Port:     node.Port,
 				Priority: 1.0,
 				Hidden:   false,
@@ -238,7 +249,7 @@ func (d *Deployer) collectReplicaSets() map[string][]ReplicaSetMember {
 	// Collect from config servers
 	for _, node := range d.topology.ConfigSvr {
 		member := ReplicaSetMember{
-			Host:     node.Host,
+			Host:     normalizeHost(node.Host),
 			Port:     node.Port,
 			Priority: 1.0,
 			Hidden:   false,
@@ -634,7 +645,7 @@ func (d *Deployer) startMongosProcesses(ctx context.Context) error {
 
 	// Start mongos processes via supervisor
 	for _, node := range d.topology.Mongos {
-		programName := fmt.Sprintf("mongos-%d", node.Port)
+		programName := naming.GetProgramName("mongos", node.Port)
 		fmt.Printf("  Starting mongos %s:%d via supervisor (program: %s)\n",
 			node.Host, node.Port, programName)
 		if err := d.supervisorMgr.StartProcess(programName); err != nil {

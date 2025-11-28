@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zph/mup/pkg/executor"
+	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/paths"
 	"github.com/zph/mup/pkg/plan"
 	"github.com/zph/mup/pkg/supervisor"
@@ -355,7 +356,7 @@ func (p *DeployPlanner) generateDeployPhase() plan.PlannedPhase {
 		// REQ-PM-010: Config files in version-specific paths
 		configPath, _ := p.pathResolver.ConfigFile("config", cs.Host, cs.Port)
 		dataDir := p.getNodeDataDir(cs.Host, cs.Port, cs.DataDir)
-		logDir := p.getNodeLogDir(cs.Host, cs.Port, cs.LogDir)
+		logDir := p.getNodeLogDirWithType(cs.Host, cs.Port, cs.LogDir, "config")
 
 		operations = append(operations, plan.PlannedOperation{
 			ID:          plan.NewOperationID("deploy", opIndex),
@@ -539,7 +540,7 @@ func (p *DeployPlanner) generateDeployPhase() plan.PlannedPhase {
 	// Start config servers first
 	for _, cs := range p.topology.ConfigSvr {
 		configPath, _ := p.pathResolver.ConfigFile("config", cs.Host, cs.Port)
-		programName := fmt.Sprintf("mongod-%d", cs.Port)
+		programName := naming.GetProgramName("config", cs.Port)
 		operations = append(operations, plan.PlannedOperation{
 			ID:          plan.NewOperationID("deploy", opIndex),
 			Type:        plan.OpStartProcess,
@@ -592,7 +593,7 @@ func (p *DeployPlanner) generateDeployPhase() plan.PlannedPhase {
 	// Start shard mongods
 	for _, node := range p.topology.Mongod {
 		configPath, _ := p.pathResolver.ConfigFile("mongod", node.Host, node.Port)
-		programName := fmt.Sprintf("mongod-%d", node.Port)
+		programName := naming.GetProgramName("mongod", node.Port)
 		rsInfo := ""
 		if node.ReplicaSet != "" {
 			rsInfo = fmt.Sprintf(", replica set: %s", node.ReplicaSet)
@@ -649,7 +650,7 @@ func (p *DeployPlanner) generateDeployPhase() plan.PlannedPhase {
 	// Start mongos routers last (after shards are initialized)
 	for _, mongos := range p.topology.Mongos {
 		configPath, _ := p.pathResolver.ConfigFile("mongos", mongos.Host, mongos.Port)
-		programName := fmt.Sprintf("mongos-%d", mongos.Port)
+		programName := naming.GetProgramName("mongos", mongos.Port)
 		operations = append(operations, plan.PlannedOperation{
 			ID:          plan.NewOperationID("deploy", opIndex),
 			Type:        plan.OpStartProcess,
@@ -720,7 +721,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 	if len(p.topology.ConfigSvr) > 0 {
 		rsName := p.topology.ConfigSvr[0].ReplicaSet
 		for _, cs := range p.topology.ConfigSvr {
-			member := fmt.Sprintf("%s:%d", cs.Host, cs.Port)
+			member := fmt.Sprintf("%s:%d", normalizeHost(cs.Host), cs.Port)
 			replicaSets[rsName] = append(replicaSets[rsName], member)
 		}
 	}
@@ -728,7 +729,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 	// Collect shard replica sets
 	for _, node := range p.topology.Mongod {
 		if node.ReplicaSet != "" {
-			member := fmt.Sprintf("%s:%d", node.Host, node.Port)
+			member := fmt.Sprintf("%s:%d", normalizeHost(node.Host), node.Port)
 			replicaSets[node.ReplicaSet] = append(replicaSets[node.ReplicaSet], member)
 		}
 	}
@@ -783,10 +784,13 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 		shards := make(map[string][]string)
 		for _, node := range p.topology.Mongod {
 			if node.ReplicaSet != "" {
-				member := fmt.Sprintf("%s:%d", node.Host, node.Port)
+				member := fmt.Sprintf("%s:%d", normalizeHost(node.Host), node.Port)
 				shards[node.ReplicaSet] = append(shards[node.ReplicaSet], member)
 			}
 		}
+
+		// Get first mongos for shard operations
+		mongosHost := fmt.Sprintf("%s:%d", normalizeHost(p.topology.Mongos[0].Host), p.topology.Mongos[0].Port)
 
 		// Add each shard to the cluster
 		for rsName, members := range shards {
@@ -802,6 +806,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 				Params: map[string]interface{}{
 					"shard_name":        rsName,
 					"connection_string": shardConnStr,
+					"mongos_host":       mongosHost,
 					"members":           members,
 				},
 				Changes: []plan.Change{
@@ -1020,7 +1025,7 @@ func (p *DeployPlanner) getConfigServerConnectionString() string {
 	// Build connection string
 	members := make([]string, 0, len(p.topology.ConfigSvr))
 	for _, cs := range p.topology.ConfigSvr {
-		members = append(members, fmt.Sprintf("%s:%d", cs.Host, cs.Port))
+		members = append(members, fmt.Sprintf("%s:%d", normalizeHost(cs.Host), cs.Port))
 	}
 
 	return fmt.Sprintf("%s/%s", rsName, strings.Join(members, ","))

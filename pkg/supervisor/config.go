@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"text/template"
 
+	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/topology"
 )
 
@@ -216,8 +217,8 @@ func (g *ConfigGenerator) GeneratePerNodeConfigs() error {
 
 // generateNodeSupervisorConf creates a supervisor.conf for a mongod/config server node
 func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port int, replicaSet string, isConfigSvr bool) error {
-	programName := fmt.Sprintf("%s-%d", nodeType, port)
-	processDir := filepath.Join(g.clusterDir, programName)
+	programName := naming.GetProgramName(nodeType, port)
+	processDir := filepath.Join(g.clusterDir, naming.GetProcessDir(nodeType, port))
 	confPath := filepath.Join(processDir, "supervisor.conf")
 
 	// Ensure parent directory exists
@@ -232,7 +233,9 @@ func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port
 	defer file.Close()
 
 	// Write program section
-	configPath := filepath.Join(processDir, "config", "mongod.conf")
+	// Use naming package to get the correct config filename for the node type
+	confFileName := naming.GetConfigFileName(nodeType)
+	configPath := filepath.Join(processDir, "config", confFileName)
 	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongod-%d.log", port))
 	dataDir := filepath.Join(g.clusterRoot, "data", fmt.Sprintf("%s-%d", host, port))
 	mongodPath := filepath.Join(g.binPath, "mongod")
@@ -260,8 +263,8 @@ func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port
 
 // generateMongosNodeSupervisorConf creates a supervisor.conf for a mongos router
 func (g *ConfigGenerator) generateMongosNodeSupervisorConf(host string, port int) error {
-	programName := fmt.Sprintf("mongos-%d", port)
-	processDir := filepath.Join(g.clusterDir, programName)
+	programName := naming.GetProgramName("mongos", port)
+	processDir := filepath.Join(g.clusterDir, naming.GetProcessDir("mongos", port))
 	confPath := filepath.Join(processDir, "supervisor.conf")
 
 	// Ensure parent directory exists
@@ -276,7 +279,7 @@ func (g *ConfigGenerator) generateMongosNodeSupervisorConf(host string, port int
 	defer file.Close()
 
 	// Write program section
-	configPath := filepath.Join(processDir, "config", "mongos.conf")
+	configPath := filepath.Join(processDir, "config", naming.GetConfigFileName("mongos"))
 	logFile := filepath.Join(processDir, "log", fmt.Sprintf("supervisor-mongos-%d.log", port))
 	mongosPath := filepath.Join(g.binPath, "mongos")
 

@@ -130,11 +130,11 @@ type OperationProfilingConfig struct {
 
 // MongosConfig represents mongos (router) configuration
 type MongosConfig struct {
-	Net               NetConfig                `yaml:"net"`
-	SystemLog         SystemLogConfig          `yaml:"systemLog"`
-	ProcessManagement ProcessManagementConfig  `yaml:"processManagement"`
-	Sharding          MongosShardingConfig     `yaml:"sharding"`
-	Security          *SecurityConfig          `yaml:"security,omitempty"`
+	Net               NetConfig                 `yaml:"net"`
+	SystemLog         SystemLogConfig           `yaml:"systemLog"`
+	ProcessManagement *ProcessManagementConfig  `yaml:"processManagement,omitempty"`
+	Sharding          MongosShardingConfig      `yaml:"sharding"`
+	Security          *SecurityConfig           `yaml:"security,omitempty"`
 }
 
 type MongosShardingConfig struct {

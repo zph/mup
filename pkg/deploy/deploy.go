@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/template"
 	"github.com/zph/mup/pkg/topology"
@@ -75,8 +76,8 @@ func (d *Deployer) createDirectories(ctx context.Context) error {
 		for _, node := range d.topology.ConfigSvr {
 			if node.Host == host {
 				dirs[d.getNodeDataDir(node.Host, node.Port, node.DataDir)] = true
-				dirs[d.getNodeLogDir(node.Host, node.Port, node.LogDir)] = true
-				dirs[d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir)] = true
+				dirs[d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "config")] = true
+				dirs[d.getNodeConfigDirWithType(node.Host, node.Port, node.ConfigDir, "config")] = true
 			}
 		}
 
@@ -149,12 +150,12 @@ func (d *Deployer) GenerateMongodConfig(node topology.MongodNode) error {
 		},
 		SystemLog: template.SystemLogConfig{
 			Destination: "file",
-			Path:        filepath.Join(d.getNodeLogDir(node.Host, node.Port, node.LogDir), "mongod.log"),
+			Path:        filepath.Join(d.getNodeLogDir(node.Host, node.Port, node.LogDir), naming.GetLogFileName()),
 			LogAppend:   true,
 		},
 		ProcessManagement: template.ProcessManagementConfig{
 			Fork:        false,
-			PIDFilePath: filepath.Join(d.getNodeDataDir(node.Host, node.Port, node.DataDir), "mongod.pid"),
+			PIDFilePath: filepath.Join(d.getNodeDataDir(node.Host, node.Port, node.DataDir), naming.GetPIDFileName()),
 		},
 	}
 
@@ -213,13 +214,10 @@ func (d *Deployer) GenerateMongosConfig(node topology.MongosNode) error {
 		},
 		SystemLog: template.SystemLogConfig{
 			Destination: "file",
-			Path:        filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"), "mongos.log"),
+			Path:        filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"), naming.GetLogFileName()),
 			LogAppend:   true,
 		},
-		ProcessManagement: template.ProcessManagementConfig{
-			Fork:        false,
-			PIDFilePath: filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "mongos"), "mongos.pid"),
-		},
+		// ProcessManagement is nil (omitted) for mongos 3.6 compatibility
 		Sharding: template.MongosShardingConfig{
 			ConfigDB: d.getConfigServerConnectionString(),
 		},
@@ -252,8 +250,8 @@ func (d *Deployer) GenerateConfigServerConfig(node topology.ConfigNode) error {
 	exec := d.executors[node.Host]
 
 	configPath := filepath.Join(
-		d.getNodeConfigDir(node.Host, node.Port, node.ConfigDir),
-		"mongod.conf",
+		d.getNodeConfigDirWithType(node.Host, node.Port, node.ConfigDir, "config"),
+		"config.conf",
 	)
 
 	// Build template data (config servers are mongod with clusterRole: configsvr)
@@ -276,12 +274,12 @@ func (d *Deployer) GenerateConfigServerConfig(node topology.ConfigNode) error {
 		},
 		SystemLog: template.SystemLogConfig{
 			Destination: "file",
-			Path:        filepath.Join(d.getNodeLogDir(node.Host, node.Port, node.LogDir), "mongod.log"),
+			Path:        filepath.Join(d.getNodeLogDirWithType(node.Host, node.Port, node.LogDir, "config"), naming.GetLogFileName()),
 			LogAppend:   true,
 		},
 		ProcessManagement: template.ProcessManagementConfig{
 			Fork:        false,
-			PIDFilePath: filepath.Join(d.getNodeDataDir(node.Host, node.Port, node.DataDir), "mongod.pid"),
+			PIDFilePath: filepath.Join(d.getNodeDataDir(node.Host, node.Port, node.DataDir), naming.GetPIDFileName()),
 		},
 		Replication: &template.ReplicationConfig{
 			ReplSetName:               node.ReplicaSet,
@@ -377,7 +375,7 @@ func (d *Deployer) startProcesses(ctx context.Context) error {
 	if len(d.topology.ConfigSvr) > 0 {
 		var configPrograms []string
 		for _, node := range d.topology.ConfigSvr {
-			programName := fmt.Sprintf("mongod-%d", node.Port)
+			programName := naming.GetProgramName("config", node.Port)
 			configPrograms = append(configPrograms, programName)
 			fmt.Printf("  Config server %s:%d (program: %s)\n",
 				node.Host, node.Port, programName)
@@ -608,7 +606,7 @@ func (d *Deployer) getConfigServerConnectionString() string {
 	// Build connection string
 	var members []string
 	for _, node := range d.topology.ConfigSvr {
-		members = append(members, fmt.Sprintf("%s:%d", node.Host, node.Port))
+		members = append(members, fmt.Sprintf("%s:%d", normalizeHost(node.Host), node.Port))
 	}
 
 	return fmt.Sprintf("%s/%s", rsName, joinStrings(members, ","))

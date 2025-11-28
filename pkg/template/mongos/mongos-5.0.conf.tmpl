@@ -25,12 +25,14 @@ systemLog:
   timeStampFormat: {{ .SystemLog.TimeStampFormat }}
 {{- end }}
 
+{{- if .ProcessManagement }}
 processManagement:
 {{- if .ProcessManagement.Fork }}
   fork: {{ .ProcessManagement.Fork }}
 {{- end }}
 {{- if .ProcessManagement.PIDFilePath }}
   pidFilePath: {{ .ProcessManagement.PIDFilePath }}
+{{- end }}
 {{- end }}
 
 sharding:

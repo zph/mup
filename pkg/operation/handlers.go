@@ -736,9 +736,9 @@ func (h *GenerateConfigHandler) generateMongodConfig(op *plan.PlannedOperation, 
 
 	replicaSet, _ := op.Params["replica_set"].(string)
 
-	// Generate unique log file name using host and port
-	host := op.Target.Host
-	logFileName := fmt.Sprintf("mongod-%s-%d.log", host, port)
+	// Use simple generic names - folder context provides node type
+	logFileName := "process.log"
+	pidFileName := "process.pid"
 
 	// Build template data
 	data := template.MongodConfig{
@@ -765,7 +765,7 @@ func (h *GenerateConfigHandler) generateMongodConfig(op *plan.PlannedOperation, 
 		},
 		ProcessManagement: template.ProcessManagementConfig{
 			Fork:        false,
-			PIDFilePath: filepath.Join(dataDir, "mongod.pid"),
+			PIDFilePath: filepath.Join(dataDir, pidFileName),
 		},
 	}
 
@@ -815,9 +815,8 @@ func (h *GenerateConfigHandler) generateMongosConfig(op *plan.PlannedOperation, 
 		return nil, fmt.Errorf("config_db parameter not found or invalid type")
 	}
 
-	// Generate unique log file name using host and port
-	host := op.Target.Host
-	logFileName := fmt.Sprintf("mongos-%s-%d.log", host, port)
+	// Use simple generic name - folder context provides node type
+	logFileName := "process.log"
 
 	// Build template data
 	data := template.MongosConfig{
@@ -830,9 +829,7 @@ func (h *GenerateConfigHandler) generateMongosConfig(op *plan.PlannedOperation, 
 			Path:        filepath.Join(logDir, logFileName),
 			LogAppend:   true,
 		},
-		ProcessManagement: template.ProcessManagementConfig{
-			Fork: false,
-		},
+		// ProcessManagement is nil (omitted) for mongos 3.6 compatibility
 		Sharding: template.MongosShardingConfig{
 			ConfigDB: configDB,
 		},
