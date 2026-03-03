@@ -25,9 +25,7 @@ type ReplicaSetMember struct {
 func GetReplicaSetStatus(ctx context.Context, rsName string, hosts []string) ([]ReplicaSetMember, error) {
 	// Connect to replica set
 	var hostsStr []string
-	for _, h := range hosts {
-		hostsStr = append(hostsStr, h)
-	}
+	hostsStr = append(hostsStr, hosts...)
 	uri := fmt.Sprintf("mongodb://%s/?replicaSet=%s", strings.Join(hostsStr, ","), rsName)
 
 	clientOpts := options.Client().
@@ -39,7 +37,7 @@ func GetReplicaSetStatus(ctx context.Context, rsName string, hosts []string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to replica set: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Run replSetGetStatus
 	adminDB := client.Database("admin")
@@ -72,7 +70,7 @@ func GetReplicaSetStatus(ctx context.Context, rsName string, hosts []string) ([]
 		var port int
 		if len(parts) == 2 {
 			host = parts[0]
-			fmt.Sscanf(parts[1], "%d", &port)
+			_, _ = fmt.Sscanf(parts[1], "%d", &port)
 		}
 
 		rsmembers = append(rsmembers, ReplicaSetMember{
@@ -107,7 +105,7 @@ func StepDownPrimary(ctx context.Context, primaryHost string, rsName string, all
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to primary: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Record old primary
 	oldPrimary := primaryHost

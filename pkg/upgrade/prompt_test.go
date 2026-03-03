@@ -17,7 +17,7 @@ func TestParsePromptLevel(t *testing.T) {
 		{"phase", PromptLevelPhase, false},
 		{"node", PromptLevelNode, false},
 		{"critical", PromptLevelCritical, false},
-		{"", PromptLevelNone, false}, // Empty string defaults to none
+		{"", PromptLevelNone, false},     // Empty string defaults to none
 		{"NONE", PromptLevelNone, false}, // Case insensitive
 		{"Phase", PromptLevelPhase, false},
 		{"invalid", "", true},

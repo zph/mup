@@ -12,7 +12,7 @@ import (
 func TestCheckpointer_CreateCheckpoint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -39,7 +39,7 @@ func TestCheckpointer_CreateCheckpoint(t *testing.T) {
 func TestCheckpointer_LoadCheckpoint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -69,7 +69,7 @@ func TestCheckpointer_LoadCheckpoint(t *testing.T) {
 func TestCheckpointer_ListCheckpoints(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -104,7 +104,7 @@ func TestCheckpointer_ListCheckpoints(t *testing.T) {
 func TestCheckpointer_GetLatestCheckpoint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -134,7 +134,7 @@ func TestCheckpointer_GetLatestCheckpoint(t *testing.T) {
 func TestCheckpointer_GetLatestCheckpoint_NoCheckpoints(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -150,7 +150,7 @@ func TestCheckpointer_GetLatestCheckpoint_NoCheckpoints(t *testing.T) {
 func TestCheckpointer_RestoreFromCheckpoint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -181,7 +181,7 @@ func TestCheckpointer_RestoreFromCheckpoint(t *testing.T) {
 func TestCheckpointer_CleanupOldCheckpoints(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)
@@ -213,7 +213,7 @@ func TestCheckpointer_CleanupOldCheckpoints(t *testing.T) {
 func TestCheckpointer_GetCheckpointInfo(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-checkpointer-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	stateMgr := NewStateManager(tmpDir)
 	checkpointer := NewCheckpointer(stateMgr)

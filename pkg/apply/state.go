@@ -15,13 +15,13 @@ import (
 // ApplyState tracks execution progress
 type ApplyState struct {
 	// Identity
-	StateID     string    `json:"state_id"`      // UUID for this apply
-	PlanID      string    `json:"plan_id"`       // Which plan we're executing
-	ClusterName string    `json:"cluster_name"`
-	Operation   string    `json:"operation"`     // "deploy", "upgrade", "import", etc.
+	StateID     string `json:"state_id"` // UUID for this apply
+	PlanID      string `json:"plan_id"`  // Which plan we're executing
+	ClusterName string `json:"cluster_name"`
+	Operation   string `json:"operation"` // "deploy", "upgrade", "import", etc.
 
 	// Status
-	Status      ApplyStatus `json:"status"`      // "pending", "running", "paused", "completed", "failed"
+	Status      ApplyStatus `json:"status"` // "pending", "running", "paused", "completed", "failed"
 	StartedAt   time.Time   `json:"started_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
 	CompletedAt *time.Time  `json:"completed_at,omitempty"`
@@ -67,13 +67,13 @@ type PhaseState struct {
 
 // OperationState tracks the state of an operation
 type OperationState struct {
-	ID          string               `json:"id"`
-	Status      ApplyStatus          `json:"status"`
-	StartedAt   *time.Time           `json:"started_at,omitempty"`
-	CompletedAt *time.Time           `json:"completed_at,omitempty"`
-	Error       string               `json:"error,omitempty"`
-	Result      *OperationResult     `json:"result,omitempty"`
-	Retries     int                  `json:"retries"`
+	ID          string           `json:"id"`
+	Status      ApplyStatus      `json:"status"`
+	StartedAt   *time.Time       `json:"started_at,omitempty"`
+	CompletedAt *time.Time       `json:"completed_at,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	Result      *OperationResult `json:"result,omitempty"`
+	Retries     int              `json:"retries"`
 }
 
 // OperationResult contains the result of an operation

@@ -16,8 +16,8 @@ import (
 type ClusterLock struct {
 	ClusterName string    `json:"cluster_name"`
 	PlanID      string    `json:"plan_id"`
-	Operation   string    `json:"operation"`   // "deploy", "upgrade", "import", etc.
-	LockedBy    string    `json:"locked_by"`   // "user@host:pid"
+	Operation   string    `json:"operation"` // "deploy", "upgrade", "import", etc.
+	LockedBy    string    `json:"locked_by"` // "user@host:pid"
 	LockedAt    time.Time `json:"locked_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	LockTimeout string    `json:"lock_timeout"` // Duration string like "24h"
@@ -297,7 +297,7 @@ func (m *LockManager) saveLock(lock *ClusterLock) error {
 	}
 
 	if err := os.Rename(tempPath, lockPath); err != nil {
-		os.Remove(tempPath) // Clean up temp file
+		_ = os.Remove(tempPath) // Clean up temp file
 		return fmt.Errorf("failed to rename lock file: %w", err)
 	}
 

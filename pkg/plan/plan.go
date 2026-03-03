@@ -12,8 +12,8 @@ import (
 // Plan represents a complete operation plan
 type Plan struct {
 	// Identity
-	PlanID      string    `json:"plan_id"`      // UUID for this plan
-	Operation   string    `json:"operation"`    // "deploy", "upgrade", "import", "start", etc.
+	PlanID      string    `json:"plan_id"`   // UUID for this plan
+	Operation   string    `json:"operation"` // "deploy", "upgrade", "import", "start", etc.
 	ClusterName string    `json:"cluster_name"`
 	CreatedAt   time.Time `json:"created_at"`
 
@@ -40,55 +40,55 @@ type Plan struct {
 
 // PlannedPhase represents one phase of execution
 type PlannedPhase struct {
-	Name              string              `json:"name"`        // "prepare", "deploy", "initialize"
-	Description       string              `json:"description"`
-	Order             int                 `json:"order"`
-	Operations        []PlannedOperation  `json:"operations"`
-	BeforeHook        *Hook               `json:"before_hook,omitempty"`
-	AfterHook         *Hook               `json:"after_hook,omitempty"`
-	EstimatedDuration string              `json:"estimated_duration,omitempty"`
+	Name              string             `json:"name"` // "prepare", "deploy", "initialize"
+	Description       string             `json:"description"`
+	Order             int                `json:"order"`
+	Operations        []PlannedOperation `json:"operations"`
+	BeforeHook        *Hook              `json:"before_hook,omitempty"`
+	AfterHook         *Hook              `json:"after_hook,omitempty"`
+	EstimatedDuration string             `json:"estimated_duration,omitempty"`
 }
 
 // PlannedOperation is a single atomic action
 type PlannedOperation struct {
-	ID            string           `json:"id"`           // Unique operation ID
-	Type          OperationType    `json:"type"`         // "download_binary", "create_dir", etc.
-	Description   string           `json:"description"`  // Human-readable
-	Target        OperationTarget  `json:"target"`       // What/where
-	PreConditions []SafetyCheck    `json:"pre_conditions,omitempty"`
-	Changes       []Change         `json:"changes"`
-	DependsOn     []string         `json:"depends_on,omitempty"` // Operation IDs
-	Parallel      bool             `json:"parallel"`             // Can run in parallel with siblings
-	Params        map[string]interface{} `json:"params,omitempty"` // Operation-specific parameters
+	ID            string                 `json:"id"`          // Unique operation ID
+	Type          OperationType          `json:"type"`        // "download_binary", "create_dir", etc.
+	Description   string                 `json:"description"` // Human-readable
+	Target        OperationTarget        `json:"target"`      // What/where
+	PreConditions []SafetyCheck          `json:"pre_conditions,omitempty"`
+	Changes       []Change               `json:"changes"`
+	DependsOn     []string               `json:"depends_on,omitempty"` // Operation IDs
+	Parallel      bool                   `json:"parallel"`             // Can run in parallel with siblings
+	Params        map[string]interface{} `json:"params,omitempty"`     // Operation-specific parameters
 }
 
 // OperationType enumerates all operation types
 type OperationType string
 
 const (
-	OpDownloadBinary   OperationType = "download_binary"
-	OpCopyBinary       OperationType = "copy_binary"
+	OpDownloadBinary        OperationType = "download_binary"
+	OpCopyBinary            OperationType = "copy_binary"
 	OpCreateDirectory       OperationType = "create_directory"
 	OpCreateSymlink         OperationType = "create_symlink"
 	OpUploadFile            OperationType = "upload_file"
 	OpGenerateConfig        OperationType = "generate_config"
 	OpGenerateSupervisorCfg OperationType = "generate_supervisor_config"
-	OpStartSupervisor  OperationType = "start_supervisor"
-	OpStartProcess     OperationType = "start_process"
-	OpWaitForProcess   OperationType = "wait_for_process"
-	OpInitReplicaSet   OperationType = "init_replica_set"
-	OpAddShard         OperationType = "add_shard"
-	OpVerifyHealth     OperationType = "verify_health"
-	OpSaveMetadata     OperationType = "save_metadata"
-	OpStopProcess      OperationType = "stop_process"
-	OpRemoveDirectory  OperationType = "remove_directory"
-	OpBackupData       OperationType = "backup_data"
-	OpRestoreData      OperationType = "restore_data"
-	OpSetFCV           OperationType = "set_fcv"
-	OpWaitForReady     OperationType = "wait_for_ready"
-	OpDrainNode        OperationType = "drain_node"
-	OpImportData       OperationType = "import_data"
-	OpValidateData     OperationType = "validate_data"
+	OpStartSupervisor       OperationType = "start_supervisor"
+	OpStartProcess          OperationType = "start_process"
+	OpWaitForProcess        OperationType = "wait_for_process"
+	OpInitReplicaSet        OperationType = "init_replica_set"
+	OpAddShard              OperationType = "add_shard"
+	OpVerifyHealth          OperationType = "verify_health"
+	OpSaveMetadata          OperationType = "save_metadata"
+	OpStopProcess           OperationType = "stop_process"
+	OpRemoveDirectory       OperationType = "remove_directory"
+	OpBackupData            OperationType = "backup_data"
+	OpRestoreData           OperationType = "restore_data"
+	OpSetFCV                OperationType = "set_fcv"
+	OpWaitForReady          OperationType = "wait_for_ready"
+	OpDrainNode             OperationType = "drain_node"
+	OpImportData            OperationType = "import_data"
+	OpValidateData          OperationType = "validate_data"
 )
 
 // OperationTarget describes what the operation acts on

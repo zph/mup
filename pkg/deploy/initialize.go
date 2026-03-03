@@ -96,7 +96,7 @@ func (d *Deployer) waitForProcesses(ctx context.Context) error {
 }
 
 // waitForNode waits for a specific MongoDB node to be ready
-func (d *Deployer) waitForNode(ctx context.Context, host string, port int, deadline time.Time, pollInterval time.Duration) error {
+func (d *Deployer) waitForNode(_ context.Context, host string, port int, deadline time.Time, pollInterval time.Duration) error {
 	exec := d.executors[host]
 	attempt := 0
 
@@ -288,9 +288,7 @@ func (d *Deployer) initializeReplicaSet(ctx context.Context, rsName string, memb
 		return fmt.Errorf("failed to connect to primary node %s: %w", primaryHost, err)
 	}
 	defer func() {
-		if err := client.Disconnect(initCtx); err != nil {
-			// Ignore disconnect errors during cleanup
-		}
+		_ = client.Disconnect(initCtx)
 	}()
 
 	// Check if replica set is already initialized
@@ -352,7 +350,7 @@ func (d *Deployer) initializeReplicaSet(ctx context.Context, rsName string, memb
 	}
 
 	// Disconnect and wait for replica set to initialize
-	client.Disconnect(initCtx)
+	_ = client.Disconnect(initCtx)
 
 	// Wait for primary to be elected by polling replSetGetStatus
 	fmt.Printf("    Waiting for primary to be elected in replica set %s...\n", rsName)
@@ -395,7 +393,7 @@ func (d *Deployer) initializeReplicaSet(ctx context.Context, rsName string, memb
 		// Check replica set status
 		var status bson.M
 		err = checkClient.Database("admin").RunCommand(waitCtx, bson.M{"replSetGetStatus": 1}).Decode(&status)
-		checkClient.Disconnect(waitCtx)
+		_ = checkClient.Disconnect(waitCtx)
 
 		if err != nil {
 			fmt.Printf("    Waiting for replica set to initialize... (attempt %d/%d)\n", i+1, maxRetries)
@@ -460,7 +458,7 @@ func (d *Deployer) initializeReplicaSet(ctx context.Context, rsName string, memb
 						pingCtx, pingCancel := context.WithTimeout(waitCtx, 10*time.Second)
 						err = replSetClient.Ping(pingCtx, nil)
 						pingCancel()
-						replSetClient.Disconnect(waitCtx)
+						_ = replSetClient.Disconnect(waitCtx)
 
 						if err == nil {
 							connectionVerified = true
@@ -532,9 +530,7 @@ func (d *Deployer) configureSharding(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to mongos at %s: %w", mongosHost, err)
 	}
 	defer func() {
-		if err := client.Disconnect(initCtx); err != nil {
-			// Ignore disconnect errors during cleanup
-		}
+		_ = client.Disconnect(initCtx)
 	}()
 
 	// Add each replica set as a shard
@@ -605,7 +601,7 @@ func (d *Deployer) configureSharding(ctx context.Context) error {
 
 // generateMongosConfigs generates mongos configuration files
 // This is called after config servers are initialized so configDB points to initialized RS
-func (d *Deployer) generateMongosConfigs(ctx context.Context) error {
+func (d *Deployer) generateMongosConfigs(_ context.Context) error {
 	if len(d.topology.Mongos) == 0 {
 		return nil
 	}
@@ -624,7 +620,7 @@ func (d *Deployer) generateMongosConfigs(ctx context.Context) error {
 
 // startMongosProcesses starts all mongos processes via supervisor
 // This is called after config servers are initialized as a replica set
-func (d *Deployer) startMongosProcesses(ctx context.Context) error {
+func (d *Deployer) startMongosProcesses(_ context.Context) error {
 	if len(d.topology.Mongos) == 0 {
 		return nil
 	}
@@ -708,7 +704,7 @@ func (d *Deployer) waitForMongosHealth(ctx context.Context, host string, port in
 			pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 			err = client.Ping(pingCtx, nil)
 			pingCancel()
-			client.Disconnect(checkCtx)
+			_ = client.Disconnect(checkCtx)
 
 			if err == nil {
 				cancel()

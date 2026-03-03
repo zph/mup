@@ -79,7 +79,7 @@ func (s *PlanStore) SavePlan(p *Plan) (string, error) {
 	}
 
 	if err := os.Rename(tempPath, planPath); err != nil {
-		os.Remove(tempPath) // Clean up temp file
+		_ = os.Remove(tempPath) // Clean up temp file
 		return "", fmt.Errorf("failed to rename plan file: %w", err)
 	}
 
@@ -203,7 +203,7 @@ func (s *PlanStore) GetPlanMetadata(clusterName, planID string) (PlanMetadata, e
 	if err != nil {
 		return PlanMetadata{}, fmt.Errorf("failed to open plan file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Parse only what we need for metadata
 	var planData struct {
@@ -267,7 +267,7 @@ func (s *PlanStore) DeletePlan(clusterName, planID string) error {
 	}
 
 	// Remove checksum file (ignore errors)
-	os.Remove(checksumPath)
+	_ = os.Remove(checksumPath)
 
 	return nil
 }
@@ -303,7 +303,7 @@ func ComputeChecksum(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {

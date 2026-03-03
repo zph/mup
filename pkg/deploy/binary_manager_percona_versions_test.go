@@ -27,64 +27,64 @@ func TestPercona_AvailableVersions(t *testing.T) {
 	// Test latest version from each major release series
 	// Based on Percona's documentation and availability
 	testVersions := []struct {
-		majorVersion string
-		version      string
+		majorVersion    string
+		version         string
 		expectAvailable bool
-		note         string
+		note            string
 	}{
 		{
-			majorVersion: "8.0",
-			version:      "8.0.12-4",
+			majorVersion:    "8.0",
+			version:         "8.0.12-4",
 			expectAvailable: true,
-			note:         "Latest 8.0 release",
+			note:            "Latest 8.0 release",
 		},
 		{
-			majorVersion: "7.0",
-			version:      "7.0.24-13",
+			majorVersion:    "7.0",
+			version:         "7.0.24-13",
 			expectAvailable: true,
-			note:         "Latest 7.0 release",
+			note:            "Latest 7.0 release",
 		},
 		{
-			majorVersion: "7.0",
-			version:      "7.0.15-9",
+			majorVersion:    "7.0",
+			version:         "7.0.15-9",
 			expectAvailable: true,
-			note:         "Earlier 7.0 release",
+			note:            "Earlier 7.0 release",
 		},
 		{
-			majorVersion: "6.0",
-			version:      "6.0.25-20",
+			majorVersion:    "6.0",
+			version:         "6.0.25-20",
 			expectAvailable: true,
-			note:         "Latest 6.0 release (via .deb packages)",
+			note:            "Latest 6.0 release (via .deb packages)",
 		},
 		{
-			majorVersion: "5.0",
-			version:      "5.0.28-24",
+			majorVersion:    "5.0",
+			version:         "5.0.28-24",
 			expectAvailable: true,
-			note:         "Latest 5.0 release (uses jammy-minimal)",
+			note:            "Latest 5.0 release (uses jammy-minimal)",
 		},
 		{
-			majorVersion: "4.4",
-			version:      "4.4.29-28",
+			majorVersion:    "4.4",
+			version:         "4.4.29-28",
 			expectAvailable: true,
-			note:         "Latest 4.4 release (via .deb packages)",
+			note:            "Latest 4.4 release (via .deb packages)",
 		},
 		{
-			majorVersion: "4.2",
-			version:      "4.2.25-25",
+			majorVersion:    "4.2",
+			version:         "4.2.25-25",
 			expectAvailable: true,
-			note:         "Latest 4.2 release (via .deb packages)",
+			note:            "Latest 4.2 release (via .deb packages)",
 		},
 		{
-			majorVersion: "4.0",
-			version:      "4.0.28-23",
+			majorVersion:    "4.0",
+			version:         "4.0.28-23",
 			expectAvailable: true,
-			note:         "Latest 4.0 release (via .deb packages)",
+			note:            "Latest 4.0 release (via .deb packages)",
 		},
 		{
-			majorVersion: "3.6",
-			version:      "3.6.23-13",
+			majorVersion:    "3.6",
+			version:         "3.6.23-13",
 			expectAvailable: true,
-			note:         "Latest 3.6 release (via .deb packages with special handling)",
+			note:            "Latest 3.6 release (via .deb packages with special handling)",
 		},
 	}
 
@@ -163,9 +163,9 @@ func TestPercona_DownloadLatestMajorVersions(t *testing.T) {
 	// Only test versions we know are available
 	// Based on TestPercona_AvailableVersions results
 	availableVersions := []string{
-		"8.0.12-4",   // Latest 8.0
-		"7.0.24-13",  // Latest 7.0
-		"5.0.28-24",  // Latest 5.0
+		"8.0.12-4",  // Latest 8.0
+		"7.0.24-13", // Latest 7.0
+		"5.0.28-24", // Latest 5.0
 	}
 
 	for _, version := range availableVersions {

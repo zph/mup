@@ -2,6 +2,7 @@ package paths
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -391,15 +392,15 @@ func TestClusterLayout_DeployFlow_WithSimulator(t *testing.T) {
 	}
 
 	// Verify data is outside version directory
-	if filepath.HasPrefix(nodeDataDir, versionDir) {
+	if strings.HasPrefix(nodeDataDir, versionDir) {
 		t.Error("Data directory should not be within version directory")
 	}
 
 	// Verify config and log are within version directory
-	if !filepath.HasPrefix(configDir, versionDir) {
+	if !strings.HasPrefix(configDir, versionDir) {
 		t.Error("Config directory should be within version directory")
 	}
-	if !filepath.HasPrefix(logDir, versionDir) {
+	if !strings.HasPrefix(logDir, versionDir) {
 		t.Error("Log directory should be within version directory")
 	}
 }
@@ -442,7 +443,7 @@ func TestClusterLayout_DataReuseAcrossUpgrades(t *testing.T) {
 	}
 
 	// Verify data directory is shared
-	if filepath.HasPrefix(nodeDataDir, v7Dir) || filepath.HasPrefix(nodeDataDir, v8Dir) {
+	if strings.HasPrefix(nodeDataDir, v7Dir) || strings.HasPrefix(nodeDataDir, v8Dir) {
 		t.Error("Data directory should not be version-specific")
 	}
 

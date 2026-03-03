@@ -43,32 +43,31 @@ type UpgraderInterface interface {
 
 // UpgradeConfig contains configuration for an upgrade
 type UpgradeConfig struct {
-	ClusterName      string
-	FromVersion      string // Auto-detected from metadata
-	ToVersion        string
-	TargetVariant    deploy.Variant // From deploy.Variant
-	UpgradeFCV       bool            // Whether to upgrade FCV after binary upgrade
-	ParallelShards   bool            // Whether to upgrade shards in parallel
-	PromptLevel      PromptLevel
-	MetaDir          string
-	Topology         *topology.Topology
-	Executors        map[string]executor.Executor // host -> executor
-	StateManager     *StateManager
-	Prompter         *Prompter
-	DryRun           bool
-	WaitConfig       *WaitConfig   // [UPG-009] Configurable wait times
-	HookRegistry     *HookRegistry // [UPG-009] Lifecycle hooks
+	ClusterName    string
+	FromVersion    string // Auto-detected from metadata
+	ToVersion      string
+	TargetVariant  deploy.Variant // From deploy.Variant
+	UpgradeFCV     bool           // Whether to upgrade FCV after binary upgrade
+	ParallelShards bool           // Whether to upgrade shards in parallel
+	PromptLevel    PromptLevel
+	MetaDir        string
+	Topology       *topology.Topology
+	Executors      map[string]executor.Executor // host -> executor
+	StateManager   *StateManager
+	Prompter       *Prompter
+	DryRun         bool
+	WaitConfig     *WaitConfig   // [UPG-009] Configurable wait times
+	HookRegistry   *HookRegistry // [UPG-009] Lifecycle hooks
 }
 
 // Upgrader implements the upgrade workflow
 type Upgrader struct {
-	config       UpgradeConfig
-	state        *UpgradeState
-	clusterMeta  *meta.ClusterMetadata
-	isLocal      bool
-	currentPhase PhaseName
-	impl         UpgraderInterface // Reference to concrete implementation for callbacks
-	nodeOps      NodeOperations    // Executor-specific node operations (local/SSH)
+	config      UpgradeConfig
+	state       *UpgradeState
+	clusterMeta *meta.ClusterMetadata
+	isLocal     bool
+	impl        UpgraderInterface // Reference to concrete implementation for callbacks
+	nodeOps     NodeOperations    // Executor-specific node operations (local/SSH)
 }
 
 // NewUpgrader creates a new upgrader
@@ -337,7 +336,7 @@ func (u *Upgrader) executePhase(ctx context.Context, phase PhaseName, fn func(co
 	// Execute phase
 	if err := fn(ctx); err != nil {
 		u.state.UpdatePhaseState(phase, PhaseStatusFailed)
-		u.config.StateManager.SaveState(u.state)
+		_ = u.config.StateManager.SaveState(u.state)
 		return err
 	}
 
@@ -414,18 +413,18 @@ func (u *Upgrader) upgradeStandalone(ctx context.Context) error {
 
 	// Update node state
 	u.state.UpdateNodeState(hostPort, NodeStatusInProgress, "")
-	u.config.StateManager.SaveState(u.state)
+	_ = u.config.StateManager.SaveState(u.state)
 
 	// Perform upgrade (will be implemented in local.go)
 	if err := u.upgradeNode(ctx, node, "STANDALONE"); err != nil {
 		u.state.UpdateNodeState(hostPort, NodeStatusFailed, err.Error())
-		u.config.StateManager.SaveState(u.state)
+		_ = u.config.StateManager.SaveState(u.state)
 		return fmt.Errorf("failed to upgrade %s: %w", hostPort, err)
 	}
 
 	// Mark complete
 	u.state.UpdateNodeState(hostPort, NodeStatusCompleted, "")
-	u.config.StateManager.CreateCheckpoint(u.state, fmt.Sprintf("Upgraded %s", hostPort))
+	_ = u.config.StateManager.CreateCheckpoint(u.state, fmt.Sprintf("Upgraded %s", hostPort))
 
 	return nil
 }
@@ -438,7 +437,7 @@ func (u *Upgrader) handlePromptResponse(response PromptResponse, hostPort string
 		u.state.mu.Lock()
 		u.state.SkippedNodes = append(u.state.SkippedNodes, hostPort)
 		u.state.mu.Unlock()
-		u.config.StateManager.SaveState(u.state)
+		_ = u.config.StateManager.SaveState(u.state)
 		fmt.Printf("  Skipped %s\n", hostPort)
 		return fmt.Errorf("node skipped")
 	case PromptResponsePause:
@@ -487,7 +486,7 @@ func (u *Upgrader) Resume(ctx context.Context) error {
 	// Confirm resume
 	fmt.Print("\nResume upgrade? (yes/no): ")
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "yes" && response != "y" {
 		return fmt.Errorf("resume cancelled by user")
 	}
@@ -639,7 +638,7 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 	var nodeErr error
 	defer func() {
 		if nodeErr != nil {
-			u.config.HookRegistry.Execute(ctx, HookContext{
+			_ = u.config.HookRegistry.Execute(ctx, HookContext{
 				HookType:    HookOnNodeFailure,
 				ClusterName: u.config.ClusterName,
 				Node:        hostPort,
@@ -714,7 +713,7 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 
 	// Update state
 	u.state.UpdateNodeState(hostPort, NodeStatusCompleted, "")
-	u.config.StateManager.CreateCheckpoint(u.state, fmt.Sprintf("Upgraded %s (%s)", hostPort, role))
+	_ = u.config.StateManager.CreateCheckpoint(u.state, fmt.Sprintf("Upgraded %s (%s)", hostPort, role))
 	progress.Complete()
 	fmt.Println()
 

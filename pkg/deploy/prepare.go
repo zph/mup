@@ -41,7 +41,7 @@ type PreflightIssue struct {
 }
 
 // preflightChecks performs comprehensive pre-deployment validation
-func (d *Deployer) preflightChecks(ctx context.Context) error {
+func (d *Deployer) preflightChecks(_ context.Context) error {
 	fmt.Println("Running pre-flight checks...")
 
 	var allIssues []PreflightIssue
@@ -155,9 +155,9 @@ func (d *Deployer) checkHost(host string, exec executor.Executor) []PreflightIss
 			if available < minDiskSpace {
 				issues = append(issues, PreflightIssue{
 					Severity: "error",
-					Message:  fmt.Sprintf("Insufficient disk space: %d GB available, %d GB required",
+					Message: fmt.Sprintf("Insufficient disk space: %d GB available, %d GB required",
 						available/(1024*1024*1024), minDiskSpace/(1024*1024*1024)),
-					Node:     host,
+					Node: host,
 				})
 			} else {
 				fmt.Printf("    %s: Disk space OK (%d GB available)\n",
@@ -244,7 +244,7 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create binary manager: %w", err)
 	}
-	defer bm.Close()
+	defer func() { _ = bm.Close() }()
 
 	// Collect all unique platforms from hosts
 	platforms, err := d.CollectPlatforms(ctx)
@@ -299,7 +299,7 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 			if err != nil {
 				// Check if this is Percona on macOS - not supported
 				if d.variant == VariantPercona && runtime.GOOS == "darwin" {
-					return fmt.Errorf("Percona Server for MongoDB does not provide macOS binaries. Please use:\n  - Official MongoDB (--variant mongo) on macOS, or\n  - Deploy to a Linux host for Percona support")
+					return fmt.Errorf("percona Server for MongoDB does not provide macOS binaries, please use:\n  - Official MongoDB (--variant mongo) on macOS, or\n  - Deploy to a Linux host for Percona support")
 				}
 
 				// On macOS arm64, fall back to x86_64 (Rosetta 2 compatibility)
@@ -348,4 +348,3 @@ func (d *Deployer) prepareBinaries(ctx context.Context) error {
 
 	return nil
 }
-

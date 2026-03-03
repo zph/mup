@@ -21,20 +21,20 @@ const (
 	HookOnNodeFailure     HookType = "on-node-failure"
 
 	// Replica set hooks
-	HookBeforePrimaryStepdown HookType = "before-primary-stepdown"
-	HookAfterPrimaryStepdown  HookType = "after-primary-stepdown"
+	HookBeforePrimaryStepdown  HookType = "before-primary-stepdown"
+	HookAfterPrimaryStepdown   HookType = "after-primary-stepdown"
 	HookBeforeSecondaryUpgrade HookType = "before-secondary-upgrade"
-	HookAfterSecondaryUpgrade HookType = "after-secondary-upgrade"
+	HookAfterSecondaryUpgrade  HookType = "after-secondary-upgrade"
 
 	// Phase hooks
 	HookBeforePhase HookType = "before-phase"
 	HookAfterPhase  HookType = "after-phase"
 
 	// Critical operation hooks
-	HookBeforeFCVUpgrade    HookType = "before-fcv-upgrade"
-	HookAfterFCVUpgrade     HookType = "after-fcv-upgrade"
-	HookBeforeBalancerStop  HookType = "before-balancer-stop"
-	HookAfterBalancerStart  HookType = "after-balancer-start"
+	HookBeforeFCVUpgrade   HookType = "before-fcv-upgrade"
+	HookAfterFCVUpgrade    HookType = "after-fcv-upgrade"
+	HookBeforeBalancerStop HookType = "before-balancer-stop"
+	HookAfterBalancerStart HookType = "after-balancer-start"
 
 	// Shard hooks
 	HookBeforeShardUpgrade HookType = "before-shard-upgrade"
@@ -50,45 +50,45 @@ const (
 // [UPG-009] Configurable delays for upgrade pacing
 type WaitConfig struct {
 	// Node-level waits
-	AfterNodeUpgrade       time.Duration `yaml:"after_node_upgrade"`        // Default: 5s
-	AfterNodeFailure       time.Duration `yaml:"after_node_failure"`        // Default: 10s
+	AfterNodeUpgrade time.Duration `yaml:"after_node_upgrade"` // Default: 5s
+	AfterNodeFailure time.Duration `yaml:"after_node_failure"` // Default: 10s
 
 	// Replica set waits
-	AfterPrimaryStepdown   time.Duration `yaml:"after_primary_stepdown"`    // Default: 30s
-	AfterSecondaryUpgrade  time.Duration `yaml:"after_secondary_upgrade"`   // Default: 10s
-	BeforePrimaryUpgrade   time.Duration `yaml:"before_primary_upgrade"`    // Default: 15s
+	AfterPrimaryStepdown  time.Duration `yaml:"after_primary_stepdown"`  // Default: 30s
+	AfterSecondaryUpgrade time.Duration `yaml:"after_secondary_upgrade"` // Default: 10s
+	BeforePrimaryUpgrade  time.Duration `yaml:"before_primary_upgrade"`  // Default: 15s
 
 	// Shard waits
-	BetweenShards          time.Duration `yaml:"between_shards"`            // Default: 60s
-	AfterShardComplete     time.Duration `yaml:"after_shard_complete"`      // Default: 30s
+	BetweenShards      time.Duration `yaml:"between_shards"`       // Default: 60s
+	AfterShardComplete time.Duration `yaml:"after_shard_complete"` // Default: 30s
 
 	// Phase waits
-	BetweenPhases          time.Duration `yaml:"between_phases"`            // Default: 10s
+	BetweenPhases time.Duration `yaml:"between_phases"` // Default: 10s
 
 	// Critical operation waits
-	AfterBalancerStop      time.Duration `yaml:"after_balancer_stop"`       // Default: 30s
-	AfterFCVUpgrade        time.Duration `yaml:"after_fcv_upgrade"`         // Default: 60s
+	AfterBalancerStop time.Duration `yaml:"after_balancer_stop"` // Default: 30s
+	AfterFCVUpgrade   time.Duration `yaml:"after_fcv_upgrade"`   // Default: 60s
 
 	// Health check intervals
-	HealthCheckInterval    time.Duration `yaml:"health_check_interval"`     // Default: 5s
-	HealthCheckTimeout     time.Duration `yaml:"health_check_timeout"`      // Default: 300s
+	HealthCheckInterval time.Duration `yaml:"health_check_interval"` // Default: 5s
+	HealthCheckTimeout  time.Duration `yaml:"health_check_timeout"`  // Default: 300s
 }
 
 // DefaultWaitConfig returns default wait times
 func DefaultWaitConfig() *WaitConfig {
 	return &WaitConfig{
-		AfterNodeUpgrade:       5 * time.Second,
-		AfterNodeFailure:       10 * time.Second,
-		AfterPrimaryStepdown:   30 * time.Second,
-		AfterSecondaryUpgrade:  10 * time.Second,
-		BeforePrimaryUpgrade:   15 * time.Second,
-		BetweenShards:          60 * time.Second,
-		AfterShardComplete:     30 * time.Second,
-		BetweenPhases:          10 * time.Second,
-		AfterBalancerStop:      30 * time.Second,
-		AfterFCVUpgrade:        60 * time.Second,
-		HealthCheckInterval:    5 * time.Second,
-		HealthCheckTimeout:     300 * time.Second,
+		AfterNodeUpgrade:      5 * time.Second,
+		AfterNodeFailure:      10 * time.Second,
+		AfterPrimaryStepdown:  30 * time.Second,
+		AfterSecondaryUpgrade: 10 * time.Second,
+		BeforePrimaryUpgrade:  15 * time.Second,
+		BetweenShards:         60 * time.Second,
+		AfterShardComplete:    30 * time.Second,
+		BetweenPhases:         10 * time.Second,
+		AfterBalancerStop:     30 * time.Second,
+		AfterFCVUpgrade:       60 * time.Second,
+		HealthCheckInterval:   5 * time.Second,
+		HealthCheckTimeout:    300 * time.Second,
 	}
 }
 
@@ -103,7 +103,7 @@ type HookContext struct {
 	FromVersion  string
 	ToVersion    string
 	AttemptCount int
-	Error        error // For failure hooks
+	Error        error             // For failure hooks
 	Metadata     map[string]string // Additional context
 }
 
@@ -192,8 +192,8 @@ func (h *CommandHook) Execute(ctx context.Context, hookCtx HookContext) error {
 	return nil
 }
 
-func (h *CommandHook) Name() string     { return h.name }
-func (h *CommandHook) Type() HookType   { return h.hookType }
+func (h *CommandHook) Name() string             { return h.name }
+func (h *CommandHook) Type() HookType           { return h.hookType }
 func (h *CommandHook) SetEnv(key, value string) { h.env[key] = value }
 
 // FunctionHook executes a Go function
@@ -482,7 +482,7 @@ func CreateCustomWaitHook(message string) *FunctionHook {
 		fmt.Printf("\n%s\n", message)
 		fmt.Printf("Node: %s (%s)\n", hookCtx.Node, hookCtx.NodeRole)
 		fmt.Print("Press Enter to continue...")
-		fmt.Scanln()
+		_, _ = fmt.Scanln()
 		return nil
 	})
 }

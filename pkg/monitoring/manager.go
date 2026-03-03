@@ -20,16 +20,16 @@ import (
 
 // Manager handles lifecycle of all monitoring components
 type Manager struct {
-	baseDir             string
-	config              *Config
-	victoriaMetrics     *VictoriaMetricsManager
-	grafana             *GrafanaManager
-	supervisorMgr       *supervisor.Manager
-	dockerClient        *docker.Client
-	nodeExporterMgr     *exporters.NodeExporterManager
-	mongoDBExporterMgr  *exporters.MongoDBExporterManager
-	executor            executor.Executor
-	exporterRegistry    *scraper.ExporterRegistry
+	baseDir            string
+	config             *Config
+	victoriaMetrics    *VictoriaMetricsManager
+	grafana            *GrafanaManager
+	supervisorMgr      *supervisor.Manager
+	dockerClient       *docker.Client
+	nodeExporterMgr    *exporters.NodeExporterManager
+	mongoDBExporterMgr *exporters.MongoDBExporterManager
+	executor           executor.Executor
+	exporterRegistry   *scraper.ExporterRegistry
 }
 
 // NewManager creates a new monitoring manager
@@ -248,14 +248,12 @@ func joinPrograms(programs []string) string {
 }
 
 // createGrafanaProvisioning creates datasource and dashboard provisioning configs
-func (m *Manager) createGrafanaProvisioning(ctx context.Context) error {
+func (m *Manager) createGrafanaProvisioning(_ context.Context) error {
 	// Create datasource provisioning
 	// Use host.docker.internal for Grafana in Docker to reach Victoria Metrics on host
 	vmURL := m.victoriaMetrics.GetURL()
 	// Replace localhost with host.docker.internal for Docker container access
-	if strings.Contains(vmURL, "localhost") {
-		vmURL = strings.Replace(vmURL, "localhost", "host.docker.internal", 1)
-	}
+	vmURL = strings.Replace(vmURL, "localhost", "host.docker.internal", 1)
 
 	datasourceConfig := fmt.Sprintf(`apiVersion: 1
 
@@ -521,12 +519,12 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 
 // checkPort checks if a TCP port is listening
 func (m *Manager) checkPort(host string, port int) bool {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
@@ -624,7 +622,7 @@ func (m *Manager) DeployExporters(ctx context.Context, clusterName string, topo 
 }
 
 // updateScrapeConfig generates and writes the scrape configuration
-func (m *Manager) updateScrapeConfig(ctx context.Context, clusterName string, topo *topology.Topology) error {
+func (m *Manager) updateScrapeConfig(_ context.Context, clusterName string, topo *topology.Topology) error {
 	scrapeConfig, err := scraper.GenerateScrapeConfig(
 		clusterName,
 		topo,

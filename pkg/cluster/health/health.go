@@ -22,8 +22,8 @@ import (
 
 // Checker performs comprehensive health checks on clusters
 type Checker struct {
-	metadata  *meta.ClusterMetadata
-	executor  executor.Executor
+	metadata   *meta.ClusterMetadata
+	executor   executor.Executor
 	supervisor *supervisor.Manager
 }
 
@@ -52,8 +52,8 @@ func NewChecker(metadata *meta.ClusterMetadata, exec executor.Executor) (*Checke
 	}
 
 	return &Checker{
-		metadata:  metadata,
-		executor:  exec,
+		metadata:   metadata,
+		executor:   exec,
 		supervisor: supMgr,
 	}, nil
 }
@@ -215,17 +215,17 @@ func (c *Checker) checkNode(ctx context.Context, node meta.NodeMetadata) NodeHea
 
 // checkPort checks if a port is listening
 func (c *Checker) checkPort(host string, port int) string {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return "stopped"
 	}
-	conn.Close()
+	_ = conn.Close()
 	return "running"
 }
 
 // checkMonitoring checks monitoring infrastructure health
-func (c *Checker) checkMonitoring(ctx context.Context) MonitoringHealth {
+func (c *Checker) checkMonitoring(_ context.Context) MonitoringHealth {
 	health := MonitoringHealth{
 		Enabled: true,
 	}
@@ -289,7 +289,7 @@ type NodeHealth struct {
 	SupervisorStatus string // Supervisor state if available
 	PID              int
 	Uptime           time.Duration
-	Version          string        // MongoDB binary version
+	Version          string // MongoDB binary version
 }
 
 // PortMapping contains all ports used by the cluster
@@ -330,7 +330,6 @@ type ExporterHealth struct {
 	Status string
 }
 
-
 // getMongoDBVersion connects to a MongoDB node and retrieves its version
 func (c *Checker) getMongoDBVersion(ctx context.Context, host string, port int) (string, error) {
 	// Create connection URI
@@ -348,7 +347,7 @@ func (c *Checker) getMongoDBVersion(ctx context.Context, host string, port int) 
 	if err != nil {
 		return "", fmt.Errorf("failed to connect: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Create a short timeout context for the query
 	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -382,7 +381,7 @@ func parseSupervisorHTTPPort(configPath string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	inHTTPSection := false

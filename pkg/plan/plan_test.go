@@ -57,8 +57,8 @@ func TestPlan_SaveAndLoad(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "test-plan-*.json")
 	require.NoError(t, err)
 	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	err = plan.SaveToFile(tmpPath)
 	require.NoError(t, err)

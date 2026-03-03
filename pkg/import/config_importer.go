@@ -172,7 +172,7 @@ func (ci *ConfigImporter) MergeCustomSettings(base, custom *template.MongodConfi
 	merged := *base
 
 	// IMP-012: Preserve SetParameter settings (custom runtime parameters)
-	if custom.SetParameter != nil && len(custom.SetParameter) > 0 {
+	if len(custom.SetParameter) > 0 {
 		if merged.SetParameter == nil {
 			merged.SetParameter = make(map[string]interface{})
 		}

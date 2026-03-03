@@ -50,10 +50,10 @@ type TLSConfig struct {
 }
 
 type StorageConfig struct {
-	DBPath         string `yaml:"dbPath,omitempty"`
+	DBPath         string        `yaml:"dbPath,omitempty"`
 	Journal        JournalConfig `yaml:"journal,omitempty"`
-	Engine         string `yaml:"engine,omitempty"` // "wiredTiger", "inMemory"
-	DirectoryPerDB bool   `yaml:"directoryPerDB,omitempty"`
+	Engine         string        `yaml:"engine,omitempty"` // "wiredTiger", "inMemory"
+	DirectoryPerDB bool          `yaml:"directoryPerDB,omitempty"`
 
 	// WiredTiger specific
 	WiredTiger *WiredTigerConfig `yaml:"wiredTiger,omitempty"`
@@ -130,11 +130,11 @@ type OperationProfilingConfig struct {
 
 // MongosConfig represents mongos (router) configuration
 type MongosConfig struct {
-	Net               NetConfig                 `yaml:"net"`
-	SystemLog         SystemLogConfig           `yaml:"systemLog"`
-	ProcessManagement *ProcessManagementConfig  `yaml:"processManagement,omitempty"`
-	Sharding          MongosShardingConfig      `yaml:"sharding"`
-	Security          *SecurityConfig           `yaml:"security,omitempty"`
+	Net               NetConfig                `yaml:"net"`
+	SystemLog         SystemLogConfig          `yaml:"systemLog"`
+	ProcessManagement *ProcessManagementConfig `yaml:"processManagement,omitempty"`
+	Sharding          MongosShardingConfig     `yaml:"sharding"`
+	Security          *SecurityConfig          `yaml:"security,omitempty"`
 }
 
 type MongosShardingConfig struct {

@@ -36,16 +36,16 @@ func (d *Deployer) finalize(ctx context.Context) error {
 
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
-	Name              string                   `yaml:"name"`
-	Version           string                   `yaml:"version"`
-	Variant           string                   `yaml:"variant"`      // MongoDB variant: "mongo" or "percona"
-	BinPath           string                   `yaml:"bin_path"`     // Path to MongoDB binaries
-	CreatedAt         time.Time                `yaml:"created_at"`
-	Status            string                   `yaml:"status"`
-	Topology          *topology.Topology       `yaml:"topology"`
-	DeployMode        string                   `yaml:"deploy_mode"` // "local" or "remote"
-	Nodes             []NodeMetadata           `yaml:"nodes"`
-	ConnectionCommand string                   `yaml:"connection_command,omitempty"` // Command to connect to cluster
+	Name              string             `yaml:"name"`
+	Version           string             `yaml:"version"`
+	Variant           string             `yaml:"variant"`  // MongoDB variant: "mongo" or "percona"
+	BinPath           string             `yaml:"bin_path"` // Path to MongoDB binaries
+	CreatedAt         time.Time          `yaml:"created_at"`
+	Status            string             `yaml:"status"`
+	Topology          *topology.Topology `yaml:"topology"`
+	DeployMode        string             `yaml:"deploy_mode"` // "local" or "remote"
+	Nodes             []NodeMetadata     `yaml:"nodes"`
+	ConnectionCommand string             `yaml:"connection_command,omitempty"` // Command to connect to cluster
 
 	// Supervisord fields
 	SupervisorConfigPath string `yaml:"supervisor_config_path,omitempty"` // Path to supervisor.ini
@@ -58,7 +58,7 @@ type ClusterMetadata struct {
 
 // NodeMetadata represents metadata for a single node
 type NodeMetadata struct {
-	Type       string `yaml:"type"`        // "mongod", "mongos", "config"
+	Type       string `yaml:"type"` // "mongod", "mongos", "config"
 	Host       string `yaml:"host"`
 	Port       int    `yaml:"port"`
 	ReplicaSet string `yaml:"replica_set,omitempty"`
@@ -74,7 +74,7 @@ type NodeMetadata struct {
 }
 
 // saveMetadata saves the cluster metadata to disk
-func (d *Deployer) saveMetadata(ctx context.Context) error {
+func (d *Deployer) saveMetadata(_ context.Context) error {
 	fmt.Println("Saving cluster metadata...")
 
 	// Create metadata directory
@@ -87,13 +87,13 @@ func (d *Deployer) saveMetadata(ctx context.Context) error {
 	connectionCommand := d.getConnectionCommand(connectionString)
 
 	metadata := ClusterMetadata{
-		Name:              d.clusterName,
-		Version:           d.version,
-		Variant:           d.variant.String(),
-		BinPath:           d.binPath,
-		CreatedAt:         time.Now(),
-		Status:            "running",
-		Topology:          d.topology,
+		Name:      d.clusterName,
+		Version:   d.version,
+		Variant:   d.variant.String(),
+		BinPath:   d.binPath,
+		CreatedAt: time.Now(),
+		Status:    "running",
+		Topology:  d.topology,
 		DeployMode: func() string {
 			if d.isLocal {
 				return "local"
@@ -340,6 +340,8 @@ func (d *Deployer) getConnectionCommand(connectionString string) string {
 }
 
 // repeatString creates a string by repeating a character n times
+//
+//nolint:unparam
 func repeatString(char string, n int) string {
 	result := ""
 	for i := 0; i < n; i++ {

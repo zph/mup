@@ -15,12 +15,12 @@ func WaitForPort(t *testing.T, host string, port int, timeout time.Duration) err
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", address, 1*time.Second)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -105,7 +105,7 @@ func GetClusterPorts(t *testing.T, topologyContent string) []int {
 			for i, field := range fields {
 				if field == "port:" && i+1 < len(fields) {
 					var port int
-					fmt.Sscanf(fields[i+1], "%d", &port)
+					_, _ = fmt.Sscanf(fields[i+1], "%d", &port)
 					if port > 0 {
 						ports = append(ports, port)
 					}
@@ -137,7 +137,7 @@ func PortAvailable(port int) bool {
 	if err != nil {
 		return false
 	}
-	listener.Close()
+	_ = listener.Close()
 	return true
 }
 

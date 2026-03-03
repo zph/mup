@@ -51,7 +51,7 @@ type PhaseName string
 const (
 	PhasePreFlight     PhaseName = "pre-flight"
 	PhaseConfigServers PhaseName = "config-servers"
-	PhaseShard         PhaseName = "shard"      // Will be "shard-N" in practice
+	PhaseShard         PhaseName = "shard" // Will be "shard-N" in practice
 	PhaseMongos        PhaseName = "mongos"
 	PhasePostUpgrade   PhaseName = "post-upgrade"
 )
@@ -73,27 +73,27 @@ type NodeState struct {
 // PhaseState represents the state of an upgrade phase
 // [UPG-011] Phase-level state tracking
 type PhaseState struct {
-	Name                  PhaseName   `yaml:"name"`
-	Status                PhaseStatus `yaml:"status"`
-	NodesInPhase          []string    `yaml:"nodes_in_phase"` // List of host:port
-	PhaseStartTimestamp   time.Time   `yaml:"phase_start_timestamp,omitempty"`
-	LastCheckpointTime    time.Time   `yaml:"last_checkpoint_time,omitempty"`
+	Name                PhaseName   `yaml:"name"`
+	Status              PhaseStatus `yaml:"status"`
+	NodesInPhase        []string    `yaml:"nodes_in_phase"` // List of host:port
+	PhaseStartTimestamp time.Time   `yaml:"phase_start_timestamp,omitempty"`
+	LastCheckpointTime  time.Time   `yaml:"last_checkpoint_time,omitempty"`
 }
 
 // UpgradeState represents the complete upgrade state
 // [UPG-011] Global upgrade state with checkpointing
 type UpgradeState struct {
 	// Global identifiers
-	UpgradeID       string        `yaml:"upgrade_id"`
-	ClusterName     string        `yaml:"cluster_name"`
-	PreviousVersion string        `yaml:"previous_version"` // e.g., "mongo-6.0.15"
-	TargetVersion   string        `yaml:"target_version"`   // e.g., "mongo-7.0.0"
-	UpgradeStartedAt time.Time    `yaml:"upgrade_started_at"`
-	LastUpdatedAt   time.Time     `yaml:"last_updated_at"`
-	OverallStatus   OverallStatus `yaml:"overall_status"`
+	UpgradeID        string        `yaml:"upgrade_id"`
+	ClusterName      string        `yaml:"cluster_name"`
+	PreviousVersion  string        `yaml:"previous_version"` // e.g., "mongo-6.0.15"
+	TargetVersion    string        `yaml:"target_version"`   // e.g., "mongo-7.0.0"
+	UpgradeStartedAt time.Time     `yaml:"upgrade_started_at"`
+	LastUpdatedAt    time.Time     `yaml:"last_updated_at"`
+	OverallStatus    OverallStatus `yaml:"overall_status"`
 
 	// Phase tracking
-	CurrentPhase PhaseName              `yaml:"current_phase"`
+	CurrentPhase PhaseName                 `yaml:"current_phase"`
 	Phases       map[PhaseName]*PhaseState `yaml:"phases"`
 
 	// Node tracking

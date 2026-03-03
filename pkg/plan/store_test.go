@@ -262,7 +262,7 @@ func TestPlanStore_DefaultStorageDir(t *testing.T) {
 	assert.NotNil(t, store)
 }
 
-// Helper function to create a test plan
+//nolint:unparam
 func createTestPlan(clusterName, operation string) *plan.Plan {
 	return &plan.Plan{
 		Operation:   operation,

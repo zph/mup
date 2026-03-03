@@ -10,10 +10,10 @@ import (
 // REQ-PM-023: PathSimulator provides test simulation harness for validating
 // path logic without filesystem I/O operations
 type PathSimulator struct {
-	mu          sync.RWMutex
-	files       map[string]bool       // path -> isDir
-	symlinks    map[string]string     // symlink path -> target path
-	operations  []string              // operation log for validation
+	mu         sync.RWMutex
+	files      map[string]bool   // path -> isDir
+	symlinks   map[string]string // symlink path -> target path
+	operations []string          // operation log for validation
 }
 
 // NewPathSimulator creates a new in-memory filesystem simulator

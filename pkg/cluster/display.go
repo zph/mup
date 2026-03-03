@@ -37,7 +37,7 @@ func (m *Manager) Display(ctx context.Context, clusterName string, format string
 func (m *Manager) displayText(metadata *meta.ClusterMetadata) error {
 	// Perform health checks
 	exec := executor.NewLocalExecutor()
-	defer exec.Close()
+	defer func() { _ = exec.Close() }()
 
 	checker, err := health.NewChecker(metadata, exec)
 	if err != nil {
@@ -178,7 +178,7 @@ func (m *Manager) displayNodeHealth(node health.NodeHealth) {
 }
 
 // displayMonitoringHealth displays monitoring infrastructure health
-func (m *Manager) displayMonitoringHealth(mon health.MonitoringHealth, metadata *meta.ClusterMetadata) {
+func (m *Manager) displayMonitoringHealth(mon health.MonitoringHealth, _ *meta.ClusterMetadata) {
 	fmt.Println("\n" + strings.Repeat("━", 70))
 	fmt.Println("MONITORING")
 	fmt.Println(strings.Repeat("━", 70))
@@ -282,25 +282,6 @@ func (m *Manager) displayYAML(metadata *meta.ClusterMetadata) error {
 func (m *Manager) displayJSON(metadata *meta.ClusterMetadata) error {
 	// TODO: Implement JSON output
 	return fmt.Errorf("JSON format not yet implemented")
-}
-
-// getNodeStatus checks if a node is running
-func (m *Manager) getNodeStatus(node meta.NodeMetadata) string {
-	// Create executor
-	exec := executor.NewLocalExecutor()
-	defer exec.Close()
-
-	// Check if port is in use
-	available, err := exec.CheckPortAvailable(node.Port)
-	if err != nil {
-		return "unknown"
-	}
-
-	if !available {
-		return "running"
-	}
-
-	return "stopped"
 }
 
 // getConnectionString builds the connection string

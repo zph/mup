@@ -27,8 +27,8 @@ type DeployPlanner struct {
 	isLocal      bool
 	binPath      string
 	dryRun       bool
-	layout       *paths.ClusterLayout        // REQ-PM-009 to REQ-PM-015
-	pathResolver *paths.LocalPathResolver    // REQ-PM-001 to REQ-PM-003
+	layout       *paths.ClusterLayout     // REQ-PM-009 to REQ-PM-015
+	pathResolver *paths.LocalPathResolver // REQ-PM-001 to REQ-PM-003
 }
 
 // NewDeployPlanner creates a new deploy planner
@@ -236,9 +236,9 @@ func (p *DeployPlanner) generatePreparePhase() plan.PlannedPhase {
 	// REQ-PM-010: Create version-specific directory structure
 	// REQ-PM-011: Data directories are version-independent
 	dirsToCreate := []string{
-		p.layout.BinDir(p.version),        // v<version>/bin
-		p.layout.DataDir(),                 // data/ (version-independent)
-		filepath.Join(p.metaDir, "tmp"),    // tmp/
+		p.layout.BinDir(p.version),      // v<version>/bin
+		p.layout.DataDir(),              // data/ (version-independent)
+		filepath.Join(p.metaDir, "tmp"), // tmp/
 	}
 
 	// REQ-PM-011: Add version-independent data directories for each mongod node
@@ -335,7 +335,6 @@ func (p *DeployPlanner) generatePreparePhase() plan.PlannedPhase {
 		},
 		Parallel: false,
 	})
-	opIndex++
 
 	return plan.PlannedPhase{
 		Name:              "prepare",
@@ -552,7 +551,7 @@ func (p *DeployPlanner) generateDeployPhase() plan.PlannedPhase {
 				Port: cs.Port,
 			},
 			Params: map[string]interface{}{
-				"program_name":     programName,
+				"program_name":      programName,
 				"supervisor_config": supervisorConfigPath,
 				"supervisor_port":   supervisorPort,
 			},
@@ -772,7 +771,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 				"replica_set": rsName,
 				"timeout":     "2m",
 			},
-			Changes: []plan.Change{},
+			Changes:  []plan.Change{},
 			Parallel: false,
 		})
 		opIndex++
@@ -833,10 +832,9 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 			Params: map[string]interface{}{
 				"expected_shards": len(shards),
 			},
-			Changes: []plan.Change{},
+			Changes:  []plan.Change{},
 			Parallel: false,
 		})
-		opIndex++
 	}
 
 	return plan.PlannedPhase{
@@ -862,7 +860,7 @@ func (p *DeployPlanner) generateFinalizePhase() plan.PlannedPhase {
 			Type: "cluster",
 			Name: p.clusterName,
 		},
-		Changes: []plan.Change{},
+		Changes:  []plan.Change{},
 		Parallel: false,
 	})
 	opIndex++

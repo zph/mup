@@ -293,7 +293,7 @@ func isPortAvailable(port int) bool {
 		// Cannot bind - port is not available
 		return false
 	}
-	listener.Close()
+	_ = listener.Close()
 
 	// Small delay to allow socket to fully close
 	time.Sleep(10 * time.Millisecond)
@@ -306,6 +306,6 @@ func isPortAvailable(port int) bool {
 	}
 
 	// Something is listening - not available
-	conn.Close()
+	_ = conn.Close()
 	return false
 }

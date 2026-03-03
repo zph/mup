@@ -25,15 +25,15 @@ import (
 )
 
 var (
-	clusterDeployVersion      string
-	clusterDeployVariant      string
-	clusterDeployUser         string
-	clusterDeployIdentityFile string
-	clusterDeployYes          bool
-	clusterDeployTimeout      time.Duration
-	clusterDeployNoMonitoring bool
-	clusterDeployPlanOnly     bool
-	clusterDeployAutoApprove  bool
+	clusterDeployVersion          string
+	clusterDeployVariant          string
+	clusterDeployUser             string
+	clusterDeployIdentityFile     string
+	clusterDeployYes              bool
+	clusterDeployTimeout          time.Duration
+	clusterDeployNoMonitoring     bool
+	clusterDeployPlanOnly         bool
+	clusterDeployAutoApprove      bool
 	clusterDeployPlanFile         string
 	clusterDeploySimulate         bool   // REQ-SIM-001: Simulation mode flag
 	clusterDeploySimulateScenario string // REQ-SIM-041: Scenario file path
@@ -44,25 +44,25 @@ var (
 	clusterKeepData      bool
 
 	// Upgrade command flags [UPG-013]
-	clusterUpgradeToVersion      string
-	clusterUpgradeVariant        string
-	clusterUpgradeFCV            bool
-	clusterUpgradeParallelShards bool
-	clusterUpgradePromptLevel    string
-	clusterUpgradeResume         bool
+	clusterUpgradeToVersion         string
+	clusterUpgradeVariant           string
+	clusterUpgradeFCV               bool
+	clusterUpgradeParallelShards    bool
+	clusterUpgradePromptLevel       string
+	clusterUpgradeResume            bool
 	clusterUpgradeResumePromptLevel string
-	clusterUpgradeDryRun         bool
+	clusterUpgradeDryRun            bool
 
 	// Import command flags
-	clusterImportAutoDetect      bool
-	clusterImportConfigFile      string
-	clusterImportDataDir         string
-	clusterImportPort            int
-	clusterImportHost            string
-	clusterImportDryRun          bool
-	clusterImportSkipRestart     bool
-	clusterImportKeepSystemd     bool
-	clusterImportSSHHost         string
+	clusterImportAutoDetect  bool
+	clusterImportConfigFile  string
+	clusterImportDataDir     string
+	clusterImportPort        int
+	clusterImportHost        string
+	clusterImportDryRun      bool
+	clusterImportSkipRestart bool
+	clusterImportKeepSystemd bool
+	clusterImportSSHHost     string
 )
 
 var clusterCmd = &cobra.Command{
@@ -159,7 +159,7 @@ Examples:
 			return err
 		}
 
-		storageDir, err := getStorageDir()
+		_, err = getStorageDir()
 		if err != nil {
 			return err
 		}
@@ -293,7 +293,7 @@ Examples:
 			fmt.Printf("  • Estimated duration: %s\n", deployPlan.EstimatedDuration())
 			fmt.Printf("\nDo you want to continue? (yes/no): ")
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "yes" && response != "y" {
 				fmt.Println("Cancelled.")
 				return nil
@@ -422,7 +422,7 @@ var clusterStopCmd = &cobra.Command{
 		if !clusterDeployYes {
 			fmt.Printf("Are you sure you want to stop cluster '%s'? [y/N]: ", clusterName)
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "Y" && response != "yes" {
 				fmt.Println("Cancelled.")
 				return nil
@@ -475,7 +475,7 @@ var clusterDestroyCmd = &cobra.Command{
 			}
 			fmt.Print("Are you sure? [y/N]: ")
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "Y" && response != "yes" {
 				fmt.Println("Cancelled.")
 				return nil
@@ -949,19 +949,19 @@ func createUpgradeConfig(clusterName, metaDir string, clusterMeta *meta.ClusterM
 	}
 
 	return upgrade.UpgradeConfig{
-		ClusterName:      clusterName,
-		FromVersion:      clusterMeta.Version,
-		ToVersion:        clusterUpgradeToVersion,
-		TargetVariant:    variant,
-		UpgradeFCV:       clusterUpgradeFCV,
-		ParallelShards:   clusterUpgradeParallelShards,
-		PromptLevel:      promptLevel,
-		MetaDir:          metaDir,
-		Topology:         topo,
-		Executors:        executors,
-		StateManager:     stateManager,
-		Prompter:         prompter,
-		DryRun:           clusterUpgradeDryRun,
+		ClusterName:    clusterName,
+		FromVersion:    clusterMeta.Version,
+		ToVersion:      clusterUpgradeToVersion,
+		TargetVariant:  variant,
+		UpgradeFCV:     clusterUpgradeFCV,
+		ParallelShards: clusterUpgradeParallelShards,
+		PromptLevel:    promptLevel,
+		MetaDir:        metaDir,
+		Topology:       topo,
+		Executors:      executors,
+		StateManager:   stateManager,
+		Prompter:       prompter,
+		DryRun:         clusterUpgradeDryRun,
 	}
 }
 

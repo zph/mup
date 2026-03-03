@@ -53,9 +53,10 @@ func (p *SystemdParser) ParseUnit(content string) (*SystemdUnit, error) {
 		}
 
 		// Parse key=value pairs
-		if currentSection == "Unit" {
+		switch currentSection {
+		case "Unit":
 			p.parseUnitSection(line, unit)
-		} else if currentSection == "Service" {
+		case "Service":
 			p.parseServiceSection(line, unit)
 		}
 	}

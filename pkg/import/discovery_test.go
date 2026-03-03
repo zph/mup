@@ -21,7 +21,7 @@ func TestDiscoveryModes(t *testing.T) {
 	t.Run("manual mode with explicit config", func(t *testing.T) {
 		// IMP-003: Use provided config paths in manual mode
 		opts := DiscoveryOptions{
-			Mode:      ManualMode,
+			Mode:       ManualMode,
 			ConfigFile: "/etc/mongod.conf",
 			DataDir:    "/var/lib/mongodb",
 			Port:       27017,

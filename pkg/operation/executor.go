@@ -167,7 +167,7 @@ func (e *Executor) validatePreConditions(ctx context.Context, op *plan.PlannedOp
 }
 
 // validateSafetyCheck validates a single safety check
-func (e *Executor) validateSafetyCheck(ctx context.Context, check *plan.SafetyCheck, exec executor.Executor) error {
+func (e *Executor) validateSafetyCheck(_ context.Context, check *plan.SafetyCheck, exec executor.Executor) error {
 	switch check.CheckType {
 	case "port_available":
 		port, ok := check.Params["port"].(float64) // JSON numbers are float64

@@ -81,7 +81,7 @@ func NewSSHExecutor(config SSHConfig) (*SSHExecutor, error) {
 			// Keep the connection alive for the lifetime of the executor
 		} else {
 			// No signers available, close the connection
-			agentConn.Close()
+			_ = agentConn.Close()
 			agentConn = nil
 		}
 	}
@@ -215,7 +215,7 @@ func (e *SSHExecutor) Execute(command string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
@@ -235,7 +235,7 @@ func (e *SSHExecutor) ExecuteWithInput(command string, stdin io.Reader) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	var stdout, stderr bytes.Buffer
 	session.Stdin = stdin

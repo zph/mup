@@ -59,13 +59,13 @@ func (m *Manager) Destroy(ctx context.Context, clusterName string, keepData bool
 		clusterDir := m.metaMgr.GetClusterDir(clusterName)
 		exec := executors["localhost"] // For local deployments
 		if metadata.SupervisorConfigPath != "" {
-			exec.RemoveFile(metadata.SupervisorConfigPath)
+			_ = exec.RemoveFile(metadata.SupervisorConfigPath)
 		} else {
 			// Fallback to default location
-			exec.RemoveFile(clusterDir + "/supervisor.ini")
+			_ = exec.RemoveFile(clusterDir + "/supervisor.ini")
 		}
-		exec.RemoveFile(clusterDir + "/supervisor.log")
-		exec.RemoveFile(clusterDir + "/supervisor.pid")
+		_ = exec.RemoveFile(clusterDir + "/supervisor.log")
+		_ = exec.RemoveFile(clusterDir + "/supervisor.pid")
 		fmt.Println("  ✓ Removed supervisor files")
 	}
 

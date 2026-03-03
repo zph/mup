@@ -28,16 +28,16 @@ type SSHContainerConfig struct {
 
 // ContainerHost represents a running SSH container
 type ContainerHost struct {
-	Container    testcontainers.Container
-	ContainerID  string
-	Hostname     string // Original hostname from topology (e.g., "localhost", "node1")
-	SSHHost      string // Docker host IP (usually 127.0.0.1)
-	SSHPort      int    // Mapped SSH port
-	InternalIP   string // Container internal IP
-	Username     string
-	Password     string
-	SSHKeyPath   string
-	Executor     Executor // Pre-configured SSHExecutor for this container
+	Container   testcontainers.Container
+	ContainerID string
+	Hostname    string // Original hostname from topology (e.g., "localhost", "node1")
+	SSHHost     string // Docker host IP (usually 127.0.0.1)
+	SSHPort     int    // Mapped SSH port
+	InternalIP  string // Container internal IP
+	Username    string
+	Password    string
+	SSHKeyPath  string
+	Executor    Executor // Pre-configured SSHExecutor for this container
 }
 
 // TestEnvironment manages a collection of SSH containers for testing
@@ -135,8 +135,8 @@ func (env *TestEnvironment) launchContainer(hostname string) (*ContainerHost, er
 			wait.ForListeningPort("22/tcp"),
 			wait.ForLog("Starting SSH daemon").WithStartupTimeout(env.Config.StartupTimeout),
 		),
-		Binds: binds,
-		Name:  fmt.Sprintf("mup-test-%s-%s", sanitizeHostname(hostname), randomString(6)),
+		Binds:      binds,
+		Name:       fmt.Sprintf("mup-test-%s-%s", sanitizeHostname(hostname), randomString(6)),
 		AutoRemove: true,
 	}
 
@@ -155,21 +155,21 @@ func (env *TestEnvironment) launchContainer(hostname string) (*ContainerHost, er
 	// Get mapped SSH port
 	mappedPort, err := container.MappedPort(ctx, "22")
 	if err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("failed to get mapped SSH port: %w", err)
 	}
 
 	// Get container IP
 	containerIP, err := container.Host(ctx)
 	if err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("failed to get container host: %w", err)
 	}
 
 	// Get internal IP
 	networks, err := container.Networks(ctx)
 	if err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("failed to get container networks: %w", err)
 	}
 
@@ -343,7 +343,7 @@ func BuildSSHNodeImage(ctx context.Context) error {
 
 	// Check if Dockerfile exists
 	if _, err := os.Stat(filepath.Join(dockerfilePath, "Dockerfile")); err != nil {
-		return fmt.Errorf("Dockerfile not found at %s: %w", dockerfilePath, err)
+		return fmt.Errorf("dockerfile not found at %s: %w", dockerfilePath, err)
 	}
 
 	// Build the image using testcontainers
@@ -367,9 +367,9 @@ func WaitForSSH(ctx context.Context, host string, port int, timeout time.Duratio
 
 	for time.Now().Before(deadline) {
 		// Try to connect
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", host, port))
+		conn, err := net.Dial("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 

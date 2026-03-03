@@ -31,11 +31,11 @@ func TestConfigGenerator_GenerateMainConfig(t *testing.T) {
 	// Create a minimal topology
 	topo := &topology.Topology{
 		Global: topology.GlobalConfig{
-			User:       "test",
-			DeployDir:  tempDir,
-			DataDir:    filepath.Join(tempDir, "data"),
-			LogDir:     filepath.Join(tempDir, "logs"),
-			ConfigDir:  filepath.Join(tempDir, "conf"),
+			User:      "test",
+			DeployDir: tempDir,
+			DataDir:   filepath.Join(tempDir, "data"),
+			LogDir:    filepath.Join(tempDir, "logs"),
+			ConfigDir: filepath.Join(tempDir, "conf"),
 		},
 		Mongod: []topology.MongodNode{
 			{
@@ -78,11 +78,11 @@ func TestConfigGenerator_GenerateMongodConfig(t *testing.T) {
 
 	topo := &topology.Topology{
 		Global: topology.GlobalConfig{
-			User:       "test",
-			DeployDir:  tempDir,
-			DataDir:    filepath.Join(tempDir, "data"),
-			LogDir:     filepath.Join(tempDir, "logs"),
-			ConfigDir:  filepath.Join(tempDir, "conf"),
+			User:      "test",
+			DeployDir: tempDir,
+			DataDir:   filepath.Join(tempDir, "data"),
+			LogDir:    filepath.Join(tempDir, "logs"),
+			ConfigDir: filepath.Join(tempDir, "conf"),
 		},
 		Mongod: []topology.MongodNode{
 			{
@@ -128,11 +128,11 @@ func TestConfigGenerator_GenerateAll(t *testing.T) {
 	// Create a 3-node replica set topology
 	topo := &topology.Topology{
 		Global: topology.GlobalConfig{
-			User:       "test",
-			DeployDir:  tempDir,
-			DataDir:    filepath.Join(tempDir, "data"),
-			LogDir:     filepath.Join(tempDir, "logs"),
-			ConfigDir:  filepath.Join(tempDir, "conf"),
+			User:      "test",
+			DeployDir: tempDir,
+			DataDir:   filepath.Join(tempDir, "data"),
+			LogDir:    filepath.Join(tempDir, "logs"),
+			ConfigDir: filepath.Join(tempDir, "conf"),
 		},
 		Mongod: []topology.MongodNode{
 			{Host: "localhost", Port: 27017, ReplicaSet: "rs0"},
@@ -277,7 +277,7 @@ func TestManager_StartStop(t *testing.T) {
 	clusterName := "test-cluster"
 	ctx := context.Background()
 
-	mgr, err := NewManager(tempDir, clusterName)
+	_, err := NewManager(tempDir, clusterName)
 	require.NoError(t, err)
 
 	// Generate config first
@@ -290,7 +290,7 @@ func TestManager_StartStop(t *testing.T) {
 	require.NoError(t, gen.GenerateAll())
 
 	// Load config
-	mgr, err = LoadManager(tempDir, clusterName)
+	mgr, err := LoadManager(tempDir, clusterName)
 	require.NoError(t, err)
 
 	// Start

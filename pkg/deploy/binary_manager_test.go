@@ -668,7 +668,7 @@ func TestBinaryManager_constructFallbackURL(t *testing.T) {
 			targetOS:  "macos",
 			mongoArch: "x86_64",
 			wantURL:   "mongodb-macos-x86_64-4.0.28.tgz", // URL should contain this
-			wantErr:   true, // URL may not exist, which is fine for testing
+			wantErr:   true,                              // URL may not exist, which is fine for testing
 		},
 		{
 			name:      "linux x86_64",
@@ -676,7 +676,7 @@ func TestBinaryManager_constructFallbackURL(t *testing.T) {
 			targetOS:  "linux",
 			mongoArch: "x86_64",
 			wantURL:   "mongodb-linux-x86_64-4.0.28.tgz", // URL should contain this
-			wantErr:   false, // May or may not exist, but URL should be constructed
+			wantErr:   false,                             // May or may not exist, but URL should be constructed
 		},
 		{
 			name:      "unsupported OS",
@@ -704,4 +704,3 @@ func TestBinaryManager_constructFallbackURL(t *testing.T) {
 		})
 	}
 }
-

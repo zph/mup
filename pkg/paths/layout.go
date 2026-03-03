@@ -99,7 +99,7 @@ func (l *ClusterLayout) CreateCurrentLink(version string) error {
 	targetPath := fmt.Sprintf("v%s", version)
 
 	// Remove existing symlink if present
-	os.Remove(linkPath)
+	_ = os.Remove(linkPath)
 
 	// Create new symlink (relative path for portability)
 	return os.Symlink(targetPath, linkPath)
@@ -112,7 +112,7 @@ func (l *ClusterLayout) CreatePreviousLink(version string) error {
 	targetPath := fmt.Sprintf("v%s", version)
 
 	// Remove existing symlink if present
-	os.Remove(linkPath)
+	_ = os.Remove(linkPath)
 
 	// Create new symlink (relative path for portability)
 	return os.Symlink(targetPath, linkPath)
@@ -125,7 +125,7 @@ func (l *ClusterLayout) CreateNextLink(version string) error {
 	targetPath := fmt.Sprintf("v%s", version)
 
 	// Remove existing symlink if present
-	os.Remove(linkPath)
+	_ = os.Remove(linkPath)
 
 	// Create new symlink (relative path for portability)
 	return os.Symlink(targetPath, linkPath)
@@ -143,14 +143,14 @@ func (l *ClusterLayout) ActivateVersion(newVersion string) error {
 	currentTarget, err := os.Readlink(currentLink)
 	if err == nil && currentTarget != "" {
 		// Current exists, move it to previous before activating new version
-		os.Remove(previousLink)
+		_ = os.Remove(previousLink)
 		if err := os.Symlink(currentTarget, previousLink); err != nil {
 			return fmt.Errorf("failed to create previous symlink: %w", err)
 		}
 	}
 
 	// Update current to point to new version
-	os.Remove(currentLink)
+	_ = os.Remove(currentLink)
 	targetPath := fmt.Sprintf("v%s", newVersion)
 	if err := os.Symlink(targetPath, currentLink); err != nil {
 		return fmt.Errorf("failed to create current symlink: %w", err)

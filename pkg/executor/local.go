@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,9 +19,7 @@ import (
 )
 
 // LocalExecutor implements Executor for local operations
-type LocalExecutor struct {
-	workDir string
-}
+type LocalExecutor struct{}
 
 // NewLocalExecutor creates a new LocalExecutor
 func NewLocalExecutor() *LocalExecutor {
@@ -164,7 +163,7 @@ func (e *LocalExecutor) IsProcessRunning(pid int) (bool, error) {
 		return true, nil
 	}
 
-	if err == syscall.ESRCH {
+	if errors.Is(err, syscall.ESRCH) {
 		return false, nil
 	}
 
@@ -196,12 +195,13 @@ func (e *LocalExecutor) GetOSInfo() (*OSInfo, error) {
 	var version string
 
 	// Get OS version
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		output, err := e.Execute("uname -r")
 		if err == nil {
 			version = strings.TrimSpace(output)
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		output, err := e.Execute("sw_vers -productVersion")
 		if err == nil {
 			version = strings.TrimSpace(output)
@@ -240,7 +240,7 @@ func (e *LocalExecutor) CheckPortAvailable(port int) (bool, error) {
 		return false, nil
 	}
 	// Successfully bound - close immediately
-	listener.Close()
+	_ = listener.Close()
 
 	// Phase 2: Double-check with dial to catch any listening processes
 	// Small delay to allow the socket to fully close
@@ -253,7 +253,7 @@ func (e *LocalExecutor) CheckPortAvailable(port int) (bool, error) {
 	}
 
 	// Something is listening on this port - not available
-	conn.Close()
+	_ = conn.Close()
 	return false, nil
 }
 
@@ -261,7 +261,8 @@ func (e *LocalExecutor) CheckPortAvailable(port int) (bool, error) {
 func (e *LocalExecutor) UserExists(username string) (bool, error) {
 	_, err := user.Lookup(username)
 	if err != nil {
-		if _, ok := err.(user.UnknownUserError); ok {
+		var unknownUserError user.UnknownUserError
+		if errors.As(err, &unknownUserError) {
 			return false, nil
 		}
 		return false, err

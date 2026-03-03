@@ -171,7 +171,7 @@ func (o *ImportOrchestrator) Import(ctx context.Context, opts ImportOptions) (*I
 				if err := o.systemdManager.DisableService(service.Name); err != nil {
 					// Rollback on failure (IMP-009)
 					fmt.Printf("  Failed to disable service, rolling back...\n")
-					o.systemdManager.RollbackAll()
+					_ = o.systemdManager.RollbackAll()
 					result.Error = fmt.Errorf("failed to disable systemd service: %w", err)
 					return result, result.Error
 				}
@@ -199,7 +199,7 @@ func (o *ImportOrchestrator) GetReplicaSetStatus(ctx context.Context, host strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Run replSetGetStatus command
 	var status bson.M
@@ -219,7 +219,7 @@ func (o *ImportOrchestrator) GetReplicaSetStatus(ctx context.Context, host strin
 					parts := strings.Split(name, ":")
 					if len(parts) == 2 {
 						member.Host = parts[0]
-						fmt.Sscanf(parts[1], "%d", &member.Port)
+						_, _ = fmt.Sscanf(parts[1], "%d", &member.Port)
 					}
 				}
 
@@ -255,7 +255,7 @@ func (o *ImportOrchestrator) StepDownPrimary(ctx context.Context, host string, p
 	if err != nil {
 		return fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Run replSetStepDown command
 	command := bson.D{
@@ -288,7 +288,7 @@ func (o *ImportOrchestrator) CheckReplicationLag(ctx context.Context, host strin
 	if err != nil {
 		return fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Get replica set status
 	var status bson.M
@@ -307,9 +307,10 @@ func (o *ImportOrchestrator) CheckReplicationLag(ctx context.Context, host strin
 				stateStr, _ := memberDoc["stateStr"].(string)
 				optime, _ := memberDoc["optimeDate"].(time.Time)
 
-				if stateStr == "PRIMARY" {
+				switch stateStr {
+				case "PRIMARY":
 					primaryOptime = optime
-				} else if stateStr == "SECONDARY" {
+				case "SECONDARY":
 					secondaryOptimes = append(secondaryOptimes, optime)
 				}
 			}

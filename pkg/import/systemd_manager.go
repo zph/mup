@@ -63,10 +63,8 @@ func (sm *SystemdManager) DisableAndStopService(serviceName string) error {
 	}
 
 	// Then stop the running service
-	if err := sm.StopService(normalizedName); err != nil {
-		// Service might not be running, which is fine
-		// Don't return error, just log
-	}
+	// Service might not be running, which is fine - ignore errors
+	_ = sm.StopService(normalizedName)
 
 	return nil
 }
@@ -108,11 +106,8 @@ func (sm *SystemdManager) EnableAndStartService(serviceName string) error {
 		return err
 	}
 
-	// Then start
-	if err := sm.StartService(normalizedName); err != nil {
-		// Starting might fail if service is already running, which is fine
-		// Don't return error
-	}
+	// Then start - might fail if service is already running, which is fine
+	_ = sm.StartService(normalizedName)
 
 	return nil
 }

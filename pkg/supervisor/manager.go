@@ -513,7 +513,7 @@ func FindAvailablePort() (int, error) {
 		if err != nil {
 			continue
 		}
-		listener.Close()
+		_ = listener.Close()
 		return port, nil
 	}
 	return 0, fmt.Errorf("no available port found in range %d-%d",

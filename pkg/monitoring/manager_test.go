@@ -153,7 +153,7 @@ func TestGenerateSupervisorConfig(t *testing.T) {
 	// Create cluster directory structure
 	clusterDir := t.TempDir()
 	monitoringDir := filepath.Join(clusterDir, "monitoring")
-	os.MkdirAll(monitoringDir, 0755)
+	_ = os.MkdirAll(monitoringDir, 0755)
 
 	config := DefaultConfig()
 	exec := executor.NewLocalExecutor()

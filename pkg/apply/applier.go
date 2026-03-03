@@ -244,7 +244,7 @@ func (a *DefaultApplier) executeParallel(ctx context.Context, operations []plan.
 }
 
 // executeOperation executes a single operation
-func (a *DefaultApplier) executeOperation(ctx context.Context, op *plan.PlannedOperation, p *plan.Plan, state *ApplyState) error {
+func (a *DefaultApplier) executeOperation(ctx context.Context, op *plan.PlannedOperation, _ *plan.Plan, state *ApplyState) error {
 	state.StartOperation(op.ID)
 	state.Log("info", state.CurrentPhase, op.ID, fmt.Sprintf("Executing: %s", op.Description))
 

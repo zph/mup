@@ -14,12 +14,12 @@ import (
 
 // ConfigGenerator generates supervisord configuration files for a cluster
 type ConfigGenerator struct {
-	clusterDir    string // Version-specific directory (e.g., ~/.mup/storage/clusters/test/v7.0)
-	clusterRoot   string // Cluster root directory (e.g., ~/.mup/storage/clusters/test)
-	clusterName   string
-	topology      *topology.Topology
-	version       string
-	binPath       string
+	clusterDir  string // Version-specific directory (e.g., ~/.mup/storage/clusters/test/v7.0)
+	clusterRoot string // Cluster root directory (e.g., ~/.mup/storage/clusters/test)
+	clusterName string
+	topology    *topology.Topology
+	version     string
+	binPath     string
 }
 
 // NewConfigGenerator creates a new config generator
@@ -127,7 +127,7 @@ func (g *ConfigGenerator) GenerateUnifiedConfig() error {
 }
 
 // writeMongodProgram writes a mongod program section to the config file
-func (g *ConfigGenerator) writeMongodProgram(file *os.File, host string, port int, replicaSet string, isConfigSvr bool) error {
+func (g *ConfigGenerator) writeMongodProgram(file *os.File, host string, port int, replicaSet string, _ bool) error { //nolint:unparam // error is always nil
 	programName := fmt.Sprintf("mongod-%d", port)
 	// Per-process directory structure: mongod-{port}/{config,log,bin}
 	processDir := filepath.Join(g.clusterDir, programName)
@@ -160,7 +160,7 @@ func (g *ConfigGenerator) writeMongodProgram(file *os.File, host string, port in
 }
 
 // writeMongosProgram writes a mongos program section to the config file
-func (g *ConfigGenerator) writeMongosProgram(file *os.File, host string, port int) error {
+func (g *ConfigGenerator) writeMongosProgram(file *os.File, _ string, port int) error { //nolint:unparam // error is always nil
 	programName := fmt.Sprintf("mongos-%d", port)
 	// Per-process directory structure: mongos-{port}/{config,log,bin}
 	processDir := filepath.Join(g.clusterDir, programName)
@@ -229,7 +229,7 @@ func (g *ConfigGenerator) GeneratePerNodeConfigs() error {
 }
 
 // generateNodeSupervisorConf creates a supervisor.conf for a mongod/config server node
-func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port int, replicaSet string, isConfigSvr bool) error {
+func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port int, replicaSet string, _ bool) error {
 	programName := naming.GetProgramName(nodeType, port)
 	processDir := filepath.Join(g.clusterDir, naming.GetProcessDir(nodeType, port))
 	confPath := filepath.Join(processDir, "supervisor.conf")
@@ -275,7 +275,7 @@ func (g *ConfigGenerator) generateNodeSupervisorConf(nodeType, host string, port
 }
 
 // generateMongosNodeSupervisorConf creates a supervisor.conf for a mongos router
-func (g *ConfigGenerator) generateMongosNodeSupervisorConf(host string, port int) error {
+func (g *ConfigGenerator) generateMongosNodeSupervisorConf(_ string, port int) error {
 	programName := naming.GetProgramName("mongos", port)
 	processDir := filepath.Join(g.clusterDir, naming.GetProcessDir("mongos", port))
 	confPath := filepath.Join(processDir, "supervisor.conf")
@@ -417,23 +417,23 @@ func (g *ConfigGenerator) GenerateMongodConfig(node topology.MongodNode) error {
 	tmpl := template.Must(template.New("mongod").Parse(mongodProgramTemplate))
 
 	data := struct {
-		Name          string
-		BinPath       string
-		ConfigPath    string
-		DataDir       string
-		LogFile       string
-		ReplicaSet    string
-		HomeDir       string
-		User          string
+		Name       string
+		BinPath    string
+		ConfigPath string
+		DataDir    string
+		LogFile    string
+		ReplicaSet string
+		HomeDir    string
+		User       string
 	}{
-		Name:          programName,
-		BinPath:       filepath.Join(g.binPath, "mongod"),
-		ConfigPath:    mongodConfigPath,
-		DataDir:       dataDir,
-		LogFile:       logFile,
-		ReplicaSet:    node.ReplicaSet,
-		HomeDir:       os.Getenv("HOME"),
-		User:          os.Getenv("USER"),
+		Name:       programName,
+		BinPath:    filepath.Join(g.binPath, "mongod"),
+		ConfigPath: mongodConfigPath,
+		DataDir:    dataDir,
+		LogFile:    logFile,
+		ReplicaSet: node.ReplicaSet,
+		HomeDir:    os.Getenv("HOME"),
+		User:       os.Getenv("USER"),
 	}
 
 	// Ensure config directory exists
@@ -464,19 +464,19 @@ func (g *ConfigGenerator) GenerateMongosConfig(node topology.MongosNode) error {
 	tmpl := template.Must(template.New("mongos").Parse(mongosProgramTemplate))
 
 	data := struct {
-		Name        string
-		BinPath     string
-		ConfigPath  string
-		LogFile     string
-		HomeDir     string
-		User        string
+		Name       string
+		BinPath    string
+		ConfigPath string
+		LogFile    string
+		HomeDir    string
+		User       string
 	}{
-		Name:        programName,
-		BinPath:     filepath.Join(g.binPath, "mongos"),
-		ConfigPath:  mongosConfigPath,
-		LogFile:     logFile,
-		HomeDir:     os.Getenv("HOME"),
-		User:        os.Getenv("USER"),
+		Name:       programName,
+		BinPath:    filepath.Join(g.binPath, "mongos"),
+		ConfigPath: mongosConfigPath,
+		LogFile:    logFile,
+		HomeDir:    os.Getenv("HOME"),
+		User:       os.Getenv("USER"),
 	}
 
 	// Ensure config directory exists

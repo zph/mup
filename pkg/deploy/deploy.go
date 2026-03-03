@@ -46,7 +46,7 @@ func (d *Deployer) deploy(ctx context.Context) error {
 }
 
 // createDirectories creates all required directories on each host
-func (d *Deployer) createDirectories(ctx context.Context) error {
+func (d *Deployer) createDirectories(_ context.Context) error {
 	fmt.Println("Creating directory structures...")
 
 	for host, exec := range d.executors {
@@ -95,7 +95,7 @@ func (d *Deployer) createDirectories(ctx context.Context) error {
 
 // generateConfigurations generates MongoDB configuration files
 // NOTE: Does NOT generate mongos configs - those are generated later after config RS init
-func (d *Deployer) generateConfigurations(ctx context.Context) error {
+func (d *Deployer) generateConfigurations(_ context.Context) error {
 	fmt.Println("Generating configuration files...")
 
 	// Generate configs for mongod nodes
@@ -312,7 +312,7 @@ func (d *Deployer) GenerateConfigServerConfig(node topology.ConfigNode) error {
 }
 
 // generateSupervisorConfigs generates supervisord configuration files
-func (d *Deployer) generateSupervisorConfigs(ctx context.Context) error {
+func (d *Deployer) generateSupervisorConfigs(_ context.Context) error {
 	fmt.Println("Generating supervisord configuration files...")
 
 	// Use version-specific directory for supervisor config
@@ -509,7 +509,7 @@ func copyFile(src, dst string) error {
 }
 
 // createVersionSymlinks creates current and previous symlinks
-func (d *Deployer) createVersionSymlinks(versionDir string) error {
+func (d *Deployer) createVersionSymlinks(_ string) error {
 	if !d.isLocal {
 		return nil // Only needed for local deployments
 	}
@@ -552,7 +552,7 @@ func (d *Deployer) createVersionSymlinks(versionDir string) error {
 // REQ-PM-010: Log and config directories are version-specific
 
 // REQ-PM-011: getNodeDataDir returns version-independent data directory
-func (d *Deployer) getNodeDataDir(host string, port int, defaultDir string) string {
+func (d *Deployer) getNodeDataDir(host string, port int, _ string) string {
 	// Use pathResolver for consistent path construction
 	dataDir, err := d.pathResolver.DataDir(host, port)
 	if err != nil {
@@ -574,7 +574,7 @@ func (d *Deployer) getNodeConfigDir(host string, port int, defaultDir string) st
 
 // REQ-PM-010: getNodeLogDirWithType gets log directory for a node with explicit type (mongod/mongos/config)
 // REQ-PM-018/019/020: Process directories use patterns mongod-<port>, mongos-<port>, config-<port>
-func (d *Deployer) getNodeLogDirWithType(host string, port int, defaultDir string, nodeType string) string {
+func (d *Deployer) getNodeLogDirWithType(host string, port int, _ string, nodeType string) string {
 	// Use pathResolver for consistent version-specific path construction
 	logDir, err := d.pathResolver.LogDir(nodeType, host, port)
 	if err != nil {
@@ -585,7 +585,7 @@ func (d *Deployer) getNodeLogDirWithType(host string, port int, defaultDir strin
 }
 
 // REQ-PM-010: getNodeConfigDirWithType gets config directory for a node with explicit type (mongod/mongos/config)
-func (d *Deployer) getNodeConfigDirWithType(host string, port int, defaultDir string, nodeType string) string {
+func (d *Deployer) getNodeConfigDirWithType(host string, port int, _ string, nodeType string) string {
 	// Use pathResolver for consistent version-specific path construction
 	configDir, err := d.pathResolver.ConfigDir(nodeType, host, port)
 	if err != nil {

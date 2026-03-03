@@ -438,7 +438,7 @@ func (h *CreateSymlinkHandler) Execute(ctx context.Context, op *plan.PlannedOper
 	targetPath := op.Params["target_path"].(string)
 
 	// Remove existing symlink if present
-	os.Remove(linkPath)
+	_ = os.Remove(linkPath)
 
 	// Create new symlink (relative path for portability)
 	if err := os.Symlink(targetPath, linkPath); err != nil {
@@ -1027,7 +1027,7 @@ func (h *WaitForProcessHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	if isSimulation {
 		// REQ-SIM-004: Record operation in simulation mode
 		cmdStr := fmt.Sprintf("Wait for process on port %d (timeout: %ds)", port, timeoutSec)
-		exec.Execute(cmdStr)
+		_, _ = exec.Execute(cmdStr)
 
 		return &apply.OperationResult{
 			Success: true,
@@ -1204,7 +1204,7 @@ func (h *InitReplicaSetHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to primary node %s: %w", primaryHost, err)
 	}
-	defer mongoClient.Disconnect(initCtx)
+	defer func() { _ = mongoClient.Disconnect(initCtx) }()
 
 	// Safety check: Check if replica set is already initialized
 	status, err := mongoClient.RunCommand(initCtx, bson.M{"replSetGetStatus": 1}, true)
@@ -1262,7 +1262,7 @@ func (h *InitReplicaSetHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconnect for verification: %w", err)
 	}
-	defer verifyClient.Disconnect(initCtx)
+	defer func() { _ = verifyClient.Disconnect(initCtx) }()
 
 	// Poll replSetGetStatus to verify primary election
 	maxRetries := 10 // Reduced for simulation - real code uses 60
@@ -1385,7 +1385,7 @@ func (h *AddShardHandler) Execute(ctx context.Context, op *plan.PlannedOperation
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to mongos at %s: %w", mongosHost, err)
 	}
-	defer mongoClient.Disconnect(initCtx)
+	defer func() { _ = mongoClient.Disconnect(initCtx) }()
 
 	// Safety check: Check if shard already exists
 	shards, err := mongoClient.RunCommand(initCtx, bson.M{"listShards": 1}, true)

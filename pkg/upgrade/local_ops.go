@@ -35,7 +35,6 @@ type LocalNodeOperations struct {
 	// Version paths
 	oldVersionDir string // e.g., ~/.mup/storage/clusters/my-cluster/v4.0
 	newVersionDir string // e.g., ~/.mup/storage/clusters/my-cluster/v4.2
-	oldBinPath    string // Old version bin directory
 	newBinPath    string // New version bin directory
 
 	// Version strings
@@ -265,8 +264,8 @@ func (ops *LocalNodeOperations) SwitchToNewVersion(ctx context.Context, oldVersi
 	}
 
 	// 3. Remove old symlinks
-	os.Remove(previousLink) // Remove old previous
-	os.Remove(currentLink)  // Remove current
+	_ = os.Remove(previousLink) // Remove old previous
+	_ = os.Remove(currentLink)  // Remove current
 
 	// 4. Create previous → old current (for rollback)
 	if oldCurrentTarget != "" {
@@ -282,7 +281,7 @@ func (ops *LocalNodeOperations) SwitchToNewVersion(ctx context.Context, oldVersi
 	}
 
 	// 6. Remove next symlink (upgrade complete)
-	os.Remove(nextLink)
+	_ = os.Remove(nextLink)
 
 	fmt.Printf("\n  ℹ️  Symlinks updated: current -> %s, previous -> %s\n", nextTarget, oldCurrentTarget)
 	return nil

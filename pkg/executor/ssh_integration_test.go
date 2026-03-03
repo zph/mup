@@ -78,7 +78,7 @@ func TestSSHExecutor_Testcontainers(t *testing.T) {
 	t.Log("Creating SSH executor...")
 	executor, err := container.CreateExecutor()
 	require.NoError(t, err, "Failed to create SSH executor")
-	defer executor.Close()
+	defer func() { _ = executor.Close() }()
 
 	// Run integration tests on the executor
 	t.Run("Connectivity", func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestSSHExecutor_MultiHost(t *testing.T) {
 		Password:       "testpass",
 		StartupTimeout: 60 * time.Second,
 	})
-	defer env.Cleanup()
+	defer func() { _ = env.Cleanup() }()
 
 	// Create a multi-host topology
 	topo := &topology.Topology{
@@ -327,7 +327,7 @@ func testSSHPortChecking(t *testing.T, exec Executor) {
 }
 
 // buildSSHNodeImageIfNeeded builds the SSH node image if it doesn't exist
-func buildSSHNodeImageIfNeeded(ctx context.Context, t *testing.T) error {
+func buildSSHNodeImageIfNeeded(_ context.Context, t *testing.T) error {
 	// Check if image exists
 	// For now, we'll just try to build it every time
 	// In the future, we could check if it exists first

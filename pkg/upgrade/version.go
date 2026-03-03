@@ -49,8 +49,9 @@ func ParseVersion(version string) (*MongoVersion, error) {
 
 // Compare compares two versions. Returns:
 // -1 if v < other
-//  0 if v == other
-//  1 if v > other
+//
+//	0 if v == other
+//	1 if v > other
 func (v *MongoVersion) Compare(other *MongoVersion) int {
 	if v.Major != other.Major {
 		if v.Major < other.Major {
@@ -84,9 +85,9 @@ func (v *MongoVersion) String() string {
 // ValidateUpgradePath validates that an upgrade from source to target version is safe
 // according to MongoDB upgrade rules:
 //
-// 1. Patch level upgrades: Always allowed within same minor version (e.g., 7.0.1 → 7.0.26)
-// 2. Version upgrades must follow the specific path: 3.6→4.0→4.2→4.4→5.0→6.0→7.0→8.0
-//    You cannot skip any step in this path (e.g., cannot go 4.0→4.4, must go 4.0→4.2→4.4)
+//  1. Patch level upgrades: Always allowed within same minor version (e.g., 7.0.1 → 7.0.26)
+//  2. Version upgrades must follow the specific path: 3.6→4.0→4.2→4.4→5.0→6.0→7.0→8.0
+//     You cannot skip any step in this path (e.g., cannot go 4.0→4.4, must go 4.0→4.2→4.4)
 //
 // Returns an error if the upgrade path is not safe.
 func ValidateUpgradePath(source, target *MongoVersion) error {

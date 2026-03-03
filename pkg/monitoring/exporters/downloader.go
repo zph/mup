@@ -53,9 +53,10 @@ func (d *Downloader) DownloadNodeExporter(ctx context.Context, version string) (
 	arch := runtime.GOARCH
 
 	// Map Go arch to node_exporter naming
-	if arch == "amd64" {
+	switch arch {
+	case "amd64":
 		arch = "amd64"
-	} else if arch == "arm64" {
+	case "arm64":
 		arch = "arm64"
 	}
 
@@ -96,9 +97,10 @@ func (d *Downloader) DownloadMongoDBExporter(ctx context.Context, version string
 	arch := runtime.GOARCH
 
 	// Map Go arch to mongodb_exporter naming
-	if arch == "amd64" {
+	switch arch {
+	case "amd64":
 		arch = "amd64"
-	} else if arch == "arm64" {
+	case "arm64":
 		arch = "arm64"
 	}
 
@@ -131,7 +133,7 @@ func (d *Downloader) downloadAndExtract(ctx context.Context, url, destDir, binar
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status: %d", resp.StatusCode)
@@ -142,7 +144,7 @@ func (d *Downloader) downloadAndExtract(ctx context.Context, url, destDir, binar
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
-	defer gzReader.Close()
+	defer func() { _ = gzReader.Close() }()
 
 	tarReader := tar.NewReader(gzReader)
 
@@ -165,7 +167,7 @@ func (d *Downloader) downloadAndExtract(ctx context.Context, url, destDir, binar
 			if err != nil {
 				return fmt.Errorf("failed to create output file: %w", err)
 			}
-			defer outFile.Close()
+			defer func() { _ = outFile.Close() }()
 
 			if _, err := io.Copy(outFile, tarReader); err != nil {
 				return fmt.Errorf("failed to write binary: %w", err)

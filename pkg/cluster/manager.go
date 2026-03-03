@@ -143,7 +143,7 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 }
 
 // startMonitoring starts the monitoring infrastructure
-func (m *Manager) startMonitoring(ctx context.Context, clusterName string) error {
+func (m *Manager) startMonitoring(_ context.Context, clusterName string) error {
 	// Monitoring is now managed by cluster supervisor via the "monitoring" group
 	// Load cluster supervisor and start monitoring group
 	clusterDir := m.metaMgr.GetClusterDir(clusterName)
@@ -255,7 +255,7 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 }
 
 // stopMonitoring stops the monitoring infrastructure
-func (m *Manager) stopMonitoring(ctx context.Context, clusterName string) error {
+func (m *Manager) stopMonitoring(_ context.Context, clusterName string) error {
 	// Monitoring is now managed by cluster supervisor via the "monitoring" group
 	// Load cluster supervisor and stop monitoring group
 	clusterDir := m.metaMgr.GetClusterDir(clusterName)
@@ -266,56 +266,6 @@ func (m *Manager) stopMonitoring(ctx context.Context, clusterName string) error 
 
 	// Stop the monitoring group (Victoria Metrics + Grafana)
 	return supMgr.StopGroup("monitoring")
-}
-
-// startNode starts a single MongoDB node and updates PID in metadata
-func (m *Manager) startNode(exec executor.Executor, node *meta.NodeMetadata, binPath string) error {
-	var command string
-	var binaryName string
-
-	switch node.Type {
-	case "mongod", "config":
-		binaryName = "mongod"
-	case "mongos":
-		binaryName = "mongos"
-	default:
-		return fmt.Errorf("unknown node type: %s", node.Type)
-	}
-
-	// Use full path to versioned binary if binPath is provided
-	if binPath != "" {
-		command = fmt.Sprintf("%s/%s --config %s", binPath, binaryName, node.ConfigFile)
-	} else {
-		// Fallback to binary in PATH (for backward compatibility)
-		command = fmt.Sprintf("%s --config %s", binaryName, node.ConfigFile)
-	}
-
-	pid, err := exec.Background(command)
-	if err != nil {
-		return err
-	}
-
-	// Update PID in the node metadata (passed by pointer)
-	node.PID = pid
-	return nil
-}
-
-// stopNode stops a single MongoDB node using PID from metadata
-func (m *Manager) stopNode(exec executor.Executor, node *meta.NodeMetadata) error {
-	// Check if we have a PID in metadata
-	if node.PID == 0 {
-		// No PID stored - process might not be running or wasn't tracked
-		return nil
-	}
-
-	// Use PID from metadata - send SIGINT for graceful shutdown
-	if err := exec.StopProcess(node.PID); err != nil {
-		return fmt.Errorf("failed to stop process %d: %w", node.PID, err)
-	}
-
-	// Clear PID from metadata
-	node.PID = 0
-	return nil
 }
 
 // createExecutors creates executors for the cluster
@@ -344,6 +294,6 @@ func (m *Manager) createExecutors(metadata *meta.ClusterMetadata) (map[string]ex
 // closeExecutors closes all executors
 func (m *Manager) closeExecutors(executors map[string]executor.Executor) {
 	for _, exec := range executors {
-		exec.Close()
+		_ = exec.Close()
 	}
 }

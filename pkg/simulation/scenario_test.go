@@ -174,9 +174,9 @@ func TestNewExecutorWithScenario(t *testing.T) {
 func TestComplexScenario(t *testing.T) {
 	scenario := &Scenario{
 		Responses: map[string]string{
-			"mongod --version":           "db version v7.0.5",
-			"systemctl status mongod":    "inactive (dead)",
-			"df -h /data":                "/dev/sda1  10G  9.5G  500M  95% /data",
+			"mongod --version":        "db version v7.0.5",
+			"systemctl status mongod": "inactive (dead)",
+			"df -h /data":             "/dev/sda1  10G  9.5G  500M  95% /data",
 		},
 		Failures: []FailureSpec{
 			{

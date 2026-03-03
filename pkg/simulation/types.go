@@ -7,10 +7,10 @@ import (
 // REQ-SIM-002: Operation tracking for simulation reporting
 type Operation struct {
 	ID        string                 `json:"id"`
-	Type      string                 `json:"type"`      // create_directory, upload_file, start_process, etc.
-	Target    string                 `json:"target"`    // Path, command, or identifier
-	Details   string                 `json:"details"`   // Additional information
-	Result    string                 `json:"result"`    // success, failure
+	Type      string                 `json:"type"`    // create_directory, upload_file, start_process, etc.
+	Target    string                 `json:"target"`  // Path, command, or identifier
+	Details   string                 `json:"details"` // Additional information
+	Result    string                 `json:"result"`  // success, failure
 	Error     string                 `json:"error,omitempty"`
 	Timestamp time.Time              `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`

@@ -138,7 +138,7 @@ func TestIntegration_PlanStoreAndLocking(t *testing.T) {
 	t.Logf("✅ New lock acquired after release")
 
 	// Cleanup
-	lockMgr.ReleaseLock(clusterName, lock2)
+	_ = lockMgr.ReleaseLock(clusterName, lock2)
 }
 
 // TestIntegration_LockRenewalDuringApply tests automatic lock renewal during plan execution
@@ -178,7 +178,7 @@ func TestIntegration_LockRenewalDuringApply(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Cleanup
-	lockMgr.ReleaseLock(clusterName, lock)
+	_ = lockMgr.ReleaseLock(clusterName, lock)
 }
 
 // TestIntegration_PlanListingAndMetadata tests plan metadata operations

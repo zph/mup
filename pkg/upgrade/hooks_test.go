@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,7 +316,7 @@ func TestWaitManager_ContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Error("expected context cancellation error")
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }

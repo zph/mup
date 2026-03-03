@@ -64,7 +64,8 @@ func (r *ValidationRunner) runSequential(ctx context.Context) ValidationResult {
 		checkResult := validator.Check(ctx)
 		result.Checks = append(result.Checks, checkResult)
 
-		if checkResult.Status == "failed" {
+		switch checkResult.Status {
+		case "failed":
 			result.Valid = false
 			result.Errors = append(result.Errors, ValidationIssue{
 				Code:     checkResult.Name,
@@ -72,7 +73,7 @@ func (r *ValidationRunner) runSequential(ctx context.Context) ValidationResult {
 				Host:     checkResult.Host,
 				Severity: "error",
 			})
-		} else if checkResult.Status == "warning" {
+		case "warning":
 			result.Warnings = append(result.Warnings, ValidationIssue{
 				Code:     checkResult.Name,
 				Message:  checkResult.Message,
@@ -106,7 +107,8 @@ func (r *ValidationRunner) runParallel(ctx context.Context) ValidationResult {
 		checkResult := <-resultChan
 		result.Checks = append(result.Checks, checkResult)
 
-		if checkResult.Status == "failed" {
+		switch checkResult.Status {
+		case "failed":
 			result.Valid = false
 			result.Errors = append(result.Errors, ValidationIssue{
 				Code:     checkResult.Name,
@@ -114,7 +116,7 @@ func (r *ValidationRunner) runParallel(ctx context.Context) ValidationResult {
 				Host:     checkResult.Host,
 				Severity: "error",
 			})
-		} else if checkResult.Status == "warning" {
+		case "warning":
 			result.Warnings = append(result.Warnings, ValidationIssue{
 				Code:     checkResult.Name,
 				Message:  checkResult.Message,

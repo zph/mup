@@ -217,6 +217,8 @@ func (d *Discoverer) scanProcesses() ([]Process, error) {
 }
 
 // processToInstance converts a Process to a MongoInstance
+//
+//nolint:unparam
 func (d *Discoverer) processToInstance(proc Process) (MongoInstance, error) {
 	instance := MongoInstance{
 		PID: proc.PID,
@@ -263,6 +265,8 @@ func (d *Discoverer) processToInstance(proc Process) (MongoInstance, error) {
 
 // detectSystemdServices detects systemd services for MongoDB
 // IMP-004: Detect associated systemd service units
+//
+//nolint:unparam
 func (d *Discoverer) detectSystemdServices() ([]SystemdService, error) {
 	// List systemd services matching mongod* or mongos*
 	output, err := d.executor.Execute("systemctl list-units --type=service --all | grep -E 'mongo[ds]' || true")
@@ -342,7 +346,7 @@ func (d *Discoverer) queryMongoDBInfo(instance MongoInstance) (MongoDBInfo, erro
 	if err != nil {
 		return info, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Get server info
 	var buildInfo bson.M

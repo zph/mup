@@ -59,8 +59,8 @@ func GetSupervisordBinary(cacheDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
 
 	cmd := exec.Command("curl", "-fsSL", url, "-o", tmpFile.Name())
 	if err := cmd.Run(); err != nil {

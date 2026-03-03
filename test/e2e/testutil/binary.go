@@ -4,6 +4,7 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -173,7 +174,8 @@ func RunCommandWithEnv(t *testing.T, env map[string]string, args ...string) *Com
 	// Determine exit code
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			// Command failed to start or context timeout
@@ -243,7 +245,8 @@ func RunCommandWithEnvAndInput(t *testing.T, env map[string]string, input string
 	// Determine exit code
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			// Command failed to start or context timeout

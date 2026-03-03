@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Platform represents a target platform for MongoDB binaries
@@ -108,7 +110,7 @@ func (bm *BinaryManager) getMongoDBVersions() (*MongoDBFullJSON, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch MongoDB versions: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch MongoDB versions: HTTP %d", resp.StatusCode)
@@ -311,7 +313,7 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 		if err != nil {
 			return "", fmt.Errorf("failed to download: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
@@ -322,15 +324,15 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 		if err != nil {
 			return "", fmt.Errorf("failed to create temp directory: %w", err)
 		}
-		defer os.RemoveAll(tempDir)
+		defer func() { _ = os.RemoveAll(tempDir) }()
 
 		// Create temp file for archive
 		tmpFile, err := os.CreateTemp("", fmt.Sprintf("mongodb-%s-*.tgz", platformKey))
 		if err != nil {
 			return "", fmt.Errorf("failed to create temp file: %w", err)
 		}
-		defer os.Remove(tmpFile.Name())
-		defer tmpFile.Close()
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
+		defer func() { _ = tmpFile.Close() }()
 
 		// Download to temp file
 		if _, err := tmpFile.ReadFrom(resp.Body); err != nil {
@@ -379,7 +381,7 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 		}
 	}
 
-	fmt.Printf("  ✓ %s %s for %s cached at %s\n", strings.Title(variant.String()), version, platformKey, binPath)
+	fmt.Printf("  ✓ %s %s for %s cached at %s\n", cases.Title(language.English).String(variant.String()), version, platformKey, binPath)
 	return binPath, nil
 }
 
@@ -487,13 +489,14 @@ func (bm *BinaryManager) getDownloadURLForPlatform(version string, platform Plat
 
 		// Check OS match
 		matchesOS := false
-		if platform.OS == "darwin" {
+		switch platform.OS {
+		case "darwin":
 			matchesOS = download.Target == targetOS ||
 				download.Target == "osx" ||
 				download.Target == "osx-ssl" ||
 				strings.Contains(strings.ToLower(download.Target), "macos") ||
 				strings.Contains(strings.ToLower(download.Target), "osx")
-		} else if platform.OS == "linux" {
+		case "linux":
 			matchesOS = strings.Contains(strings.ToLower(download.Target), "linux") ||
 				strings.Contains(strings.ToLower(download.Target), "ubuntu") ||
 				strings.Contains(strings.ToLower(download.Target), "rhel") ||
@@ -517,19 +520,21 @@ func (bm *BinaryManager) getDownloadURLForPlatform(version string, platform Plat
 func (bm *BinaryManager) constructFallbackURL(version, targetOS, mongoArch string) (string, error) {
 	var urls []string
 
-	if targetOS == "osx" {
-		if mongoArch == "x86_64" {
+	switch targetOS {
+	case "osx":
+		switch mongoArch {
+		case "x86_64":
 			urls = []string{
 				fmt.Sprintf("https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-%s.tgz", version),
 				fmt.Sprintf("https://fastdl.mongodb.org/osx/mongodb-osx-x86_64-%s.tgz", version),
 			}
-		} else if mongoArch == "arm64" {
+		case "arm64":
 			urls = []string{
 				fmt.Sprintf("https://fastdl.mongodb.org/osx/mongodb-macos-arm64-%s.tgz", version),
 				fmt.Sprintf("https://fastdl.mongodb.org/osx/mongodb-osx-arm64-%s.tgz", version),
 			}
 		}
-	} else if targetOS == "linux" {
+	case "linux":
 		urls = []string{
 			fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-%s-%s.tgz", mongoArch, version),
 		}
@@ -539,7 +544,7 @@ func (bm *BinaryManager) constructFallbackURL(version, targetOS, mongoArch strin
 	for _, url := range urls {
 		resp, err := http.Head(url)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusFound {
 				return url, nil
 			}
@@ -567,15 +572,16 @@ func (bm *BinaryManager) buildPerconaURL(version string, platform Platform) (str
 
 	// Map Go arch to Percona arch
 	perconaArch := platform.Arch
-	if perconaArch == "amd64" {
+	switch perconaArch {
+	case "amd64":
 		perconaArch = "x86_64"
-	} else if perconaArch == "arm64" {
+	case "arm64":
 		perconaArch = "aarch64"
 	}
 
 	// Validate OS - Percona only provides Linux binaries
 	if platform.OS == "darwin" {
-		return "", fmt.Errorf("Percona Server for MongoDB does not provide macOS binaries (only Linux)")
+		return "", fmt.Errorf("percona Server for MongoDB does not provide macOS binaries (only Linux)")
 	}
 	if platform.OS != "linux" {
 		return "", fmt.Errorf("unsupported OS for Percona: %s (only Linux is supported)", platform.OS)
@@ -589,11 +595,11 @@ func (bm *BinaryManager) buildPerconaURL(version string, platform Platform) (str
 
 	// Linux OS identifiers (Debian/Ubuntu codenames, RHEL versions)
 	osIdentifiers := []string{
-		"bookworm",  // Debian 12
-		"jammy",     // Ubuntu 22.04 LTS
-		"focal",     // Ubuntu 20.04 LTS
-		"noble",     // Ubuntu 24.04 LTS
-		"bullseye",  // Debian 11
+		"bookworm", // Debian 12
+		"jammy",    // Ubuntu 22.04 LTS
+		"focal",    // Ubuntu 20.04 LTS
+		"noble",    // Ubuntu 24.04 LTS
+		"bullseye", // Debian 11
 	}
 
 	// Try OS-specific minimal variants (Linux only)
@@ -622,7 +628,7 @@ func (bm *BinaryManager) buildPerconaURL(version string, platform Platform) (str
 			lastErr = err
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusFound {
 			return url, nil
@@ -728,7 +734,7 @@ func (bm *BinaryManager) buildPerconaDebURLs(version string, platform Platform) 
 				allFound = false
 				break
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			urls[component] = url
 		}
@@ -814,7 +820,7 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Download and extract each .deb package
 	for component, url := range debURLs {
@@ -825,7 +831,7 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", component, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("failed to download %s: HTTP %d", component, resp.StatusCode)
@@ -839,7 +845,7 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 		}
 
 		_, err = io.Copy(out, resp.Body)
-		out.Close()
+		_ = out.Close()
 		if err != nil {
 			return fmt.Errorf("failed to save .deb file: %w", err)
 		}
@@ -862,7 +868,7 @@ func (bm *BinaryManager) extractDebPackage(debFile, targetBinDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Extract .deb using ar
 	arCmd := exec.Command("ar", "-x", debFile)
@@ -901,7 +907,7 @@ func (bm *BinaryManager) extractDebPackage(debFile, targetBinDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open data tar: %w", err)
 	}
-	defer dataFile.Close()
+	defer func() { _ = dataFile.Close() }()
 
 	// Determine compression type and create appropriate reader
 	var tarReader *tar.Reader
@@ -910,7 +916,7 @@ func (bm *BinaryManager) extractDebPackage(debFile, targetBinDir string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		tarReader = tar.NewReader(gzReader)
 	} else if strings.HasSuffix(dataTar, ".xz") {
 		// xz compression - use external xz command
@@ -1299,9 +1305,10 @@ func (bm *BinaryManager) getLatestMongoshDownloadURL(platform Platform) (string,
 
 	// Map Go arch to mongosh arch naming
 	mongoshArch := platform.Arch
-	if mongoshArch == "amd64" {
+	switch mongoshArch {
+	case "amd64":
 		mongoshArch = "x64"
-	} else if mongoshArch == "arm64" {
+	case "arm64":
 		mongoshArch = "arm64"
 	}
 
@@ -1344,65 +1351,6 @@ func (bm *BinaryManager) getLatestMongoshDownloadURL(platform Platform) (string,
 	return mongoshVersion, url, nil
 }
 
-// getMongoshDownloadURL gets the download URL for mongosh from GitHub releases (deprecated - use getLatestMongoshDownloadURL)
-func (bm *BinaryManager) getMongoshDownloadURL(version string, platform Platform) (string, error) {
-	// Map Go arch to mongosh arch naming
-	mongoshArch := platform.Arch
-	if mongoshArch == "amd64" {
-		mongoshArch = "x64"
-	} else if mongoshArch == "arm64" {
-		mongoshArch = "arm64"
-	}
-
-	// Map Go OS to mongosh OS naming
-	var targetOS string
-	switch platform.OS {
-	case "darwin":
-		targetOS = "darwin"
-	case "linux":
-		targetOS = "linux"
-	default:
-		return "", fmt.Errorf("unsupported OS for mongosh: %s", platform.OS)
-	}
-
-	// GitHub releases URL pattern:
-	// https://github.com/mongodb-js/mongosh/releases/download/v{version}/mongosh-{version}-{os}-{arch}.tgz
-	// Version format: ensure it starts with 'v' for GitHub releases
-	githubVersion := version
-	if !strings.HasPrefix(githubVersion, "v") {
-		githubVersion = "v" + githubVersion
-	}
-
-	url := fmt.Sprintf("https://github.com/mongodb-js/mongosh/releases/download/%s/mongosh-%s-%s-%s.tgz",
-		githubVersion, version, targetOS, mongoshArch)
-
-	// Verify URL exists
-	resp, err := http.Head(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to verify mongosh URL: %w", err)
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMovedPermanently && resp.StatusCode != http.StatusFound {
-		// Try alternative arch naming (x86_64 instead of x64)
-		if mongoshArch == "x64" {
-			altURL := fmt.Sprintf("https://github.com/mongodb-js/mongosh/releases/download/%s/mongosh-%s-%s-x86_64.tgz",
-				githubVersion, version, targetOS)
-			// Verify alternative
-			altResp, err := http.Head(altURL)
-			if err == nil {
-				altResp.Body.Close()
-				if altResp.StatusCode == http.StatusOK || altResp.StatusCode == http.StatusMovedPermanently || altResp.StatusCode == http.StatusFound {
-					return altURL, nil
-				}
-			}
-		}
-		return "", fmt.Errorf("mongosh %s not found at GitHub releases (HTTP %d)", version, resp.StatusCode)
-	}
-
-	return url, nil
-}
-
 // findMongoshBinary finds the mongosh binary in extracted files
 func (bm *BinaryManager) findMongoshBinary(extractDir string, platform Platform) (string, error) {
 	binaryName := "mongosh"
@@ -1436,7 +1384,7 @@ func (bm *BinaryManager) findMongoshBinary(extractDir string, platform Platform)
 
 // ensureMongo ensures mongo (legacy shell) is available in the binPath directory
 // mongo is typically included in server archives for versions < 4.0, but we verify it exists
-func (bm *BinaryManager) ensureMongo(version string, platform Platform, binPath string) error {
+func (bm *BinaryManager) ensureMongo(_ string, platform Platform, binPath string) error {
 	// Check if mongo already exists
 	mongoPath := filepath.Join(binPath, "mongo")
 	if platform.OS == "windows" {

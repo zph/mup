@@ -16,10 +16,10 @@ const (
 
 // VictoriaMetricsManager manages Victoria Metrics lifecycle
 type VictoriaMetricsManager struct {
-	dataDir    string
-	configDir  string
-	port       int
-	retention  string
+	dataDir      string
+	configDir    string
+	port         int
+	retention    string
 	dockerClient *docker.Client
 }
 

@@ -203,4 +203,3 @@ func TestRemoveDirectoryHandler_RecursiveWarning(t *testing.T) {
 		t.Error("Execute should succeed with recursive removal")
 	}
 }
-

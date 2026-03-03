@@ -23,6 +23,6 @@ func IsVersion5OrHigher(version string) bool {
 	}
 
 	major := 0
-	fmt.Sscanf(parts[0], "%d", &major)
+	_, _ = fmt.Sscanf(parts[0], "%d", &major)
 	return major >= 5
 }

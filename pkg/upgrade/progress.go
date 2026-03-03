@@ -88,7 +88,7 @@ func (s *Spinner) Start() {
 // Stop stops the spinner and clears the line
 func (s *Spinner) Stop() {
 	close(s.done)
-	time.Sleep(150 * time.Millisecond) // Allow final update
+	time.Sleep(150 * time.Millisecond)               // Allow final update
 	fmt.Print("\r" + strings.Repeat(" ", 80) + "\r") // Clear line
 }
 

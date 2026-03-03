@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -95,7 +96,7 @@ The cluster runs on your local machine as a 3-node replica set.`,
 		if err != nil {
 			return fmt.Errorf("failed to create temp dir: %w", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		topologyFile := filepath.Join(tmpDir, "topology.yaml")
 		if err := os.WriteFile(topologyFile, []byte(playgroundTopology), 0644); err != nil {
@@ -114,7 +115,7 @@ The cluster runs on your local machine as a 3-node replica set.`,
 		if err != nil {
 			return fmt.Errorf("failed to create deployer: %w", err)
 		}
-		defer deployer.Close()
+		defer func() { _ = deployer.Close() }()
 
 		if err := deployer.Deploy(ctx); err != nil {
 			return fmt.Errorf("failed to deploy playground: %w", err)
@@ -145,7 +146,7 @@ var playgroundStopCmd = &cobra.Command{
 		if !playgroundYes {
 			fmt.Printf("Are you sure you want to stop the playground cluster? [y/N]: ")
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "Y" && response != "yes" {
 				fmt.Println("Cancelled.")
 				return nil
@@ -203,7 +204,7 @@ This operation cannot be undone.`,
 		if !playgroundYes {
 			fmt.Printf("Are you sure you want to destroy the playground cluster and remove all data? [y/N]: ")
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "Y" && response != "yes" {
 				fmt.Println("Cancelled.")
 				return nil
@@ -293,7 +294,8 @@ var playgroundConnectCmd = &cobra.Command{
 		// Execute the command
 		err = shellCmd.Run()
 		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
+			exitErr := &exec.ExitError{}
+			if errors.As(err, &exitErr) {
 				// Get the exit code
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 					os.Exit(status.ExitStatus())

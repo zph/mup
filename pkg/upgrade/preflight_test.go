@@ -10,17 +10,17 @@ import (
 // fails when meta.yaml version doesn't match the from-version parameter
 func TestValidatePrerequisites_MetaVersionMismatch(t *testing.T) {
 	tests := []struct {
-		name            string
-		metaVersion     string
-		fromVersion     string
-		shouldFail      bool
-		errorContains   string
+		name          string
+		metaVersion   string
+		fromVersion   string
+		shouldFail    bool
+		errorContains string
 	}{
 		{
-			name:          "matching versions",
-			metaVersion:   "6.0",
-			fromVersion:   "6.0",
-			shouldFail:    false,
+			name:        "matching versions",
+			metaVersion: "6.0",
+			fromVersion: "6.0",
+			shouldFail:  false,
 		},
 		{
 			name:          "meta shows newer version than from-version",

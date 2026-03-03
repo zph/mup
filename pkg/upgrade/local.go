@@ -33,7 +33,7 @@ const (
 // LocalUpgrader implements upgrade workflow for local deployments
 // [UPG-004] Local upgrade implementation
 type LocalUpgrader struct {
-	*Upgrader // Embed base upgrader
+	*Upgrader                            // Embed base upgrader
 	supervisorMgr    *supervisor.Manager // Old supervisor (current version)
 	newSupervisorMgr *supervisor.Manager // New supervisor (target version) - runs alongside old during migration
 	binaryMgr        *deploy.BinaryManager
@@ -168,7 +168,7 @@ func (lu *LocalUpgrader) ValidatePrerequisites(ctx context.Context) error {
 		fmt.Println("✗")
 		return fmt.Errorf("failed to connect to cluster: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 	fmt.Println("✓")
 
 	// 6. Check FCV matches current version
@@ -365,10 +365,10 @@ func (lu *LocalUpgrader) UpgradeMongos(ctx context.Context) error {
 		}
 
 		lu.state.UpdateNodeState(hostPort, NodeStatusInProgress, "")
-		lu.config.StateManager.SaveState(lu.state)
+		_ = lu.config.StateManager.SaveState(lu.state)
 
 		// Use base Upgrader's upgradeNode method (uses NodeOperations interface)
-		if err := lu.Upgrader.upgradeNode(ctx, node, "MONGOS"); err != nil {
+		if err := lu.upgradeNode(ctx, node, "MONGOS"); err != nil {
 			return fmt.Errorf("failed to upgrade mongos %s: %w", hostPort, err)
 		}
 	}
@@ -498,8 +498,8 @@ func (lu *LocalUpgrader) switchSymlinks() error {
 	}
 
 	// 3. Remove old symlinks
-	os.Remove(previousLink) // Remove old previous
-	os.Remove(currentLink)  // Remove current
+	_ = os.Remove(previousLink) // Remove old previous
+	_ = os.Remove(currentLink)  // Remove current
 
 	// 4. Create previous → old current (for rollback)
 	if oldCurrentTarget != "" {
@@ -515,7 +515,7 @@ func (lu *LocalUpgrader) switchSymlinks() error {
 	}
 
 	// 6. Remove next symlink (upgrade complete)
-	os.Remove(nextLink)
+	_ = os.Remove(nextLink)
 
 	fmt.Printf("\n  ℹ️  Symlinks updated: current -> %s, previous -> %s\n", nextTarget, oldCurrentTarget)
 	return nil
@@ -540,7 +540,7 @@ func (lu *LocalUpgrader) cleanupNextSymlink() {
 
 // setupVersionDirectories creates the new version directory structure
 // [UPG-006] Per-version directory management with symlinks
-func (lu *LocalUpgrader) setupVersionDirectories(ctx context.Context) error {
+func (lu *LocalUpgrader) setupVersionDirectories(_ context.Context) error {
 	fmt.Println("\n=== Setting Up Version Directories ===")
 
 	// 1. Create version directory structure
@@ -615,13 +615,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer func() { _ = destFile.Close() }()
 
 	if _, err := destFile.ReadFrom(sourceFile); err != nil {
 		return err
@@ -632,7 +632,7 @@ func copyFile(src, dst string) error {
 
 // regenerateSupervisorConfig generates new supervisor config for the new version
 // [UPG-007] Version-specific supervisor configuration
-func (lu *LocalUpgrader) regenerateSupervisorConfig(ctx context.Context) error {
+func (lu *LocalUpgrader) regenerateSupervisorConfig(_ context.Context) error {
 	fmt.Println("\n=== Generating New Supervisor Configuration ===")
 
 	// Load cluster metadata to get topology
@@ -740,7 +740,7 @@ func (lu *LocalUpgrader) startNewSupervisor(ctx context.Context) error {
 	nextLink := filepath.Join(clusterDir, SymlinkNext)
 
 	// Remove old 'next' symlink if it exists (from failed previous upgrade)
-	os.Remove(nextLink)
+	_ = os.Remove(nextLink)
 
 	// Create 'next' symlink pointing to new version
 	// This allows the new supervisor to run from 'next' while old supervisor runs from 'current'
@@ -780,6 +780,8 @@ func (lu *LocalUpgrader) startNewSupervisor(ctx context.Context) error {
 
 // stopOldSupervisor stops the old version's supervisor after all nodes migrated
 // [UPG-009] Stop old supervisor after migration complete
+//
+//nolint:unparam
 func (lu *LocalUpgrader) stopOldSupervisor(ctx context.Context) error {
 	fmt.Println("\n=== Stopping Old Version Supervisor ===")
 
@@ -929,7 +931,7 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 		lu.state.mu.Lock()
 		lu.state.Failovers = append(lu.state.Failovers, *failoverEvent)
 		lu.state.mu.Unlock()
-		lu.config.StateManager.SaveState(lu.state)
+		_ = lu.config.StateManager.SaveState(lu.state)
 
 		fmt.Printf("  ✓ Failover complete: %s -> %s (election time: %dms)\n",
 			failoverEvent.OldPrimary, failoverEvent.NewPrimary, failoverEvent.ElectionTimeMS)
@@ -962,7 +964,7 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 	if nodeState := lu.state.Nodes[hostPort]; nodeState != nil {
 		nodeState.Role = role
 	}
-	lu.config.StateManager.SaveState(lu.state)
+	_ = lu.config.StateManager.SaveState(lu.state)
 
 	// Execute before-secondary-upgrade hook (or general node upgrade if not secondary)
 	hookType := HookBeforeSecondaryUpgrade
@@ -983,7 +985,7 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 	}
 
 	// Use base Upgrader's upgradeNode method (uses NodeOperations interface)
-	if err := lu.Upgrader.upgradeNode(ctx, node, role); err != nil {
+	if err := lu.upgradeNode(ctx, node, role); err != nil {
 		return err
 	}
 
@@ -1083,7 +1085,7 @@ func (lu *LocalUpgrader) connectToCluster(ctx context.Context) (*mongo.Client, e
 
 	// Ping to verify connection
 	if err := client.Ping(ctx, nil); err != nil {
-		client.Disconnect(ctx)
+		_ = client.Disconnect(ctx)
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 
@@ -1150,19 +1152,19 @@ func (lu *LocalUpgrader) checkFCV(ctx context.Context, client *mongo.Client) (st
 	if fcv != expectedFCV {
 		// Build helpful error message with actionable commands
 		var errMsg strings.Builder
-		errMsg.WriteString(fmt.Sprintf("FCV mismatch: current FCV is %s but cluster is running version %s (expected FCV %s)\n\n", fcv, currentVersion, expectedFCV))
+		fmt.Fprintf(&errMsg, "FCV mismatch: current FCV is %s but cluster is running version %s (expected FCV %s)\n\n", fcv, currentVersion, expectedFCV)
 		errMsg.WriteString("The cluster was previously upgraded but the Feature Compatibility Version (FCV) was not updated.\n")
 		errMsg.WriteString("Before proceeding with the next upgrade, you must update the FCV to match the running version.\n\n")
 		errMsg.WriteString("To fix this, run the following commands:\n\n")
-		errMsg.WriteString(fmt.Sprintf("1. Connect to the cluster:\n   ./bin/mup cluster connect %s\n\n", lu.config.ClusterName))
-		errMsg.WriteString(fmt.Sprintf("2. Set the FCV to match the running version:\n   db.adminCommand({setFeatureCompatibilityVersion: \"%s\"})\n\n", expectedFCV))
+		fmt.Fprintf(&errMsg, "1. Connect to the cluster:\n   ./bin/mup cluster connect %s\n\n", lu.config.ClusterName)
+		fmt.Fprintf(&errMsg, "2. Set the FCV to match the running version:\n   db.adminCommand({setFeatureCompatibilityVersion: \"%s\"})\n\n", expectedFCV)
 		errMsg.WriteString("3. Verify the FCV was updated:\n   db.adminCommand({getParameter: 1, featureCompatibilityVersion: 1})\n\n")
 		errMsg.WriteString("   You should see: { \"featureCompatibilityVersion\": { \"version\": \"" + expectedFCV + "\" }, \"ok\": 1 }\n\n")
 		errMsg.WriteString("4. Exit the shell and retry the upgrade:\n   exit\n")
-		errMsg.WriteString(fmt.Sprintf("   ./bin/mup cluster upgrade %s --from-version %s --to-version %s\n\n",
-			lu.config.ClusterName, currentVersion, lu.config.ToVersion))
+		fmt.Fprintf(&errMsg, "   ./bin/mup cluster upgrade %s --from-version %s --to-version %s\n\n",
+			lu.config.ClusterName, currentVersion, lu.config.ToVersion)
 		errMsg.WriteString("IMPORTANT: Only update FCV after verifying:\n")
-		errMsg.WriteString(fmt.Sprintf("  - All nodes are running version %s\n", currentVersion))
+		fmt.Fprintf(&errMsg, "  - All nodes are running version %s\n", currentVersion)
 		errMsg.WriteString("  - The cluster is healthy\n")
 		errMsg.WriteString("  - Your application works correctly with the current version")
 
@@ -1180,7 +1182,7 @@ func (lu *LocalUpgrader) upgradeFCV(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to cluster: %w", err)
 	}
-	defer client.Disconnect(ctx)
+	defer func() { _ = client.Disconnect(ctx) }()
 
 	// Get admin database
 	adminDB := client.Database("admin")
@@ -1323,7 +1325,7 @@ func (lu *LocalUpgrader) checkShardedClusterHealth(ctx context.Context, client *
 	if err != nil {
 		return fmt.Errorf("failed to list shards: %w", err)
 	}
-	defer cursor.Close(ctx)
+	defer func() { _ = cursor.Close(ctx) }()
 
 	shardCount := 0
 	for cursor.Next(ctx) {

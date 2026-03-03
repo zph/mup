@@ -153,7 +153,7 @@ func (s *HandlerTestSuite) TestPostHookVerification(op *plan.PlannedOperation, b
 			t.Skip("PreHook failed, can't test PostHook")
 		}
 
-		_, err = s.handler.Execute(s.ctx, op, brokenExec)
+		_, _ = s.handler.Execute(s.ctx, op, brokenExec)
 		// Execute might succeed even if result is bad
 
 		postResult, err := s.handler.PostHook(s.ctx, op, brokenExec)
@@ -177,7 +177,7 @@ func (s *HandlerTestSuite) RunAll(op *plan.PlannedOperation) {
 func MarshalParams(v interface{}) map[string]interface{} {
 	data, _ := json.Marshal(v)
 	var params map[string]interface{}
-	json.Unmarshal(data, &params)
+	_ = json.Unmarshal(data, &params)
 	return params
 }
 

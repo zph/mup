@@ -173,8 +173,8 @@ func TestApplyState_SaveAndLoad(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "test-state-*.json")
 	require.NoError(t, err)
 	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	err = state.SaveToFile(tmpPath)
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestStateManager_SaveAndLoad(t *testing.T) {
 	// Create temp directory for test
 	tmpDir, err := os.MkdirTemp("", "test-state-manager-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr := NewStateManager(tmpDir)
 
@@ -215,7 +215,7 @@ func TestStateManager_SaveAndLoad(t *testing.T) {
 func TestStateManager_ListStates(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-state-manager-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr := NewStateManager(tmpDir)
 
@@ -240,7 +240,7 @@ func TestStateManager_ListStates(t *testing.T) {
 func TestStateManager_GetCurrentState(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-state-manager-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr := NewStateManager(tmpDir)
 
@@ -266,7 +266,7 @@ func TestStateManager_GetCurrentState(t *testing.T) {
 func TestStateManager_SaveCheckpoint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "test-state-manager-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr := NewStateManager(tmpDir)
 

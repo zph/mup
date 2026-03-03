@@ -19,14 +19,14 @@ const (
 
 // State represents the current state of the playground cluster
 type State struct {
-	Name             string    `json:"name"`
-	Status           string    `json:"status"` // running, stopped
-	StartedAt        time.Time `json:"started_at"`
-	MongoVersion     string    `json:"mongo_version"`
-	ConnectionURI    string    `json:"connection_uri"`
-	DataDir          string    `json:"data_dir"`
-	ClusterInfoFile  string    `json:"cluster_info_file"`
-	MongosHosts      []string  `json:"mongos_hosts,omitempty"`
+	Name            string    `json:"name"`
+	Status          string    `json:"status"` // running, stopped
+	StartedAt       time.Time `json:"started_at"`
+	MongoVersion    string    `json:"mongo_version"`
+	ConnectionURI   string    `json:"connection_uri"`
+	DataDir         string    `json:"data_dir"`
+	ClusterInfoFile string    `json:"cluster_info_file"`
+	MongosHosts     []string  `json:"mongos_hosts,omitempty"`
 }
 
 // Manager handles playground cluster lifecycle

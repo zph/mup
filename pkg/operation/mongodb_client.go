@@ -47,13 +47,13 @@ func newMongoDBClient(ctx context.Context, host string, exec executor.Executor, 
 
 	if isSimulation {
 		// Record connection in simulation using dedicated MongoDB method
-		exec.MongoExecute(host, fmt.Sprintf("mongo.Connect(%s)", client.connStr))
+		_, _ = exec.MongoExecute(host, fmt.Sprintf("mongo.Connect(%s)", client.connStr))
 	} else {
 		// Real connection
 		opts := options.Client().
 			ApplyURI(client.connStr).
-			SetServerSelectionTimeout(10*time.Second).
-			SetConnectTimeout(10*time.Second)
+			SetServerSelectionTimeout(10 * time.Second).
+			SetConnectTimeout(10 * time.Second)
 
 		if direct {
 			opts.SetDirect(true)
@@ -81,7 +81,7 @@ func (c *MongoDBClient) RunCommand(ctx context.Context, cmd bson.M, isSafetyChec
 		if isSafetyCheck {
 			suffix = " [safety check]"
 		}
-		c.executor.MongoExecute(c.host, fmt.Sprintf("client.Database(\"admin\").RunCommand(%s)%s", string(cmdJSON), suffix))
+		_, _ = c.executor.MongoExecute(c.host, fmt.Sprintf("client.Database(\"admin\").RunCommand(%s)%s", string(cmdJSON), suffix))
 
 		// For safety checks, simulate "not found" state so the flow continues
 		// This ensures simulation shows all steps that would happen on first run

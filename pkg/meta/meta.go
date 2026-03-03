@@ -14,16 +14,16 @@ import (
 
 // ClusterMetadata represents the stored cluster state
 type ClusterMetadata struct {
-	Name              string               `yaml:"name"`
-	Version           string               `yaml:"version"` // Version number (e.g., "6.0.15", "7.0.0")
-	Variant           string               `yaml:"variant"` // [UPG-002] Variant: "mongo" (default) or "percona"
-	BinPath           string               `yaml:"bin_path"`     // Path to MongoDB binaries
-	CreatedAt         time.Time            `yaml:"created_at"`
-	Status            string               `yaml:"status"`
-	Topology          *topology.Topology    `yaml:"topology"`
-	DeployMode        string               `yaml:"deploy_mode"` // "local" or "remote"
-	Nodes             []NodeMetadata       `yaml:"nodes"`
-	ConnectionCommand string               `yaml:"connection_command,omitempty"` // Command to connect to cluster
+	Name              string             `yaml:"name"`
+	Version           string             `yaml:"version"`  // Version number (e.g., "6.0.15", "7.0.0")
+	Variant           string             `yaml:"variant"`  // [UPG-002] Variant: "mongo" (default) or "percona"
+	BinPath           string             `yaml:"bin_path"` // Path to MongoDB binaries
+	CreatedAt         time.Time          `yaml:"created_at"`
+	Status            string             `yaml:"status"`
+	Topology          *topology.Topology `yaml:"topology"`
+	DeployMode        string             `yaml:"deploy_mode"` // "local" or "remote"
+	Nodes             []NodeMetadata     `yaml:"nodes"`
+	ConnectionCommand string             `yaml:"connection_command,omitempty"` // Command to connect to cluster
 
 	// Supervisord fields
 	SupervisorConfigPath string `yaml:"supervisor_config_path,omitempty"` // Path to supervisor.ini
@@ -65,13 +65,13 @@ func (cm *ClusterMetadata) SetFullVersion(fullVersion string) error {
 
 // MonitoringMetadata tracks monitoring infrastructure state
 type MonitoringMetadata struct {
-	Enabled             bool                      `yaml:"enabled"`
-	VictoriaMetricsURL  string                    `yaml:"victoria_metrics_url,omitempty"`
-	GrafanaURL          string                    `yaml:"grafana_url,omitempty"`
-	NodeExporters       []NodeExporterMetadata    `yaml:"node_exporters,omitempty"`
-	MongoDBExporters    []MongoDBExporterMetadata `yaml:"mongodb_exporters,omitempty"`
-	SupervisorConfigPath string                   `yaml:"supervisor_config_path,omitempty"` // Monitoring supervisor.ini
-	SupervisorPIDFile    string                   `yaml:"supervisor_pid_file,omitempty"`
+	Enabled              bool                      `yaml:"enabled"`
+	VictoriaMetricsURL   string                    `yaml:"victoria_metrics_url,omitempty"`
+	GrafanaURL           string                    `yaml:"grafana_url,omitempty"`
+	NodeExporters        []NodeExporterMetadata    `yaml:"node_exporters,omitempty"`
+	MongoDBExporters     []MongoDBExporterMetadata `yaml:"mongodb_exporters,omitempty"`
+	SupervisorConfigPath string                    `yaml:"supervisor_config_path,omitempty"` // Monitoring supervisor.ini
+	SupervisorPIDFile    string                    `yaml:"supervisor_pid_file,omitempty"`
 }
 
 // NodeExporterMetadata tracks a node_exporter instance
@@ -91,7 +91,7 @@ type MongoDBExporterMetadata struct {
 
 // NodeMetadata represents metadata for a single node
 type NodeMetadata struct {
-	Type       string `yaml:"type"`        // "mongod", "mongos", "config"
+	Type       string `yaml:"type"` // "mongod", "mongos", "config"
 	Host       string `yaml:"host"`
 	Port       int    `yaml:"port"`
 	ReplicaSet string `yaml:"replica_set,omitempty"`

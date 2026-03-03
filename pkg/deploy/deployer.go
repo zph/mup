@@ -20,7 +20,7 @@ import (
 type Deployer struct {
 	clusterName       string
 	version           string
-	variant           Variant                      // MongoDB variant
+	variant           Variant // MongoDB variant
 	topology          *topology.Topology
 	executors         map[string]executor.Executor // host -> executor
 	metaDir           string                       // cluster metadata directory
@@ -67,15 +67,15 @@ func NewConfigRegenerator(clusterName, version string, variant Variant, topo *to
 }
 
 // DeployConfig contains deployment configuration
-type DeployConfig struct{
-	ClusterName        string
-	Version            string
-	Variant            Variant // MongoDB variant
-	TopologyFile       string
-	SSHUser            string
-	IdentityFile       string
-	SkipConfirm        bool
-	DisableMonitoring  bool // Disable monitoring deployment
+type DeployConfig struct {
+	ClusterName       string
+	Version           string
+	Variant           Variant // MongoDB variant
+	TopologyFile      string
+	SSHUser           string
+	IdentityFile      string
+	SkipConfirm       bool
+	DisableMonitoring bool // Disable monitoring deployment
 }
 
 // NewDeployer creates a new deployer

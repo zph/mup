@@ -36,7 +36,7 @@ func TestCreateDirectoryHandler(t *testing.T) {
 func TestCreateDirectoryHandler_Idempotency(t *testing.T) {
 	// Pre-create directory in simulation
 	simConfig := &simulation.Config{
-		AllowRealFileReads: false,
+		AllowRealFileReads:  false,
 		ExistingDirectories: []string{"/test/existing"},
 	}
 	exec := simulation.NewExecutor(simConfig)

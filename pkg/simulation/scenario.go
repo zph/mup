@@ -85,11 +85,7 @@ func ApplyScenarioToConfig(scenario *Scenario, config *Config) {
 
 	// Apply failures
 	for _, failure := range scenario.Failures {
-		config.Failures = append(config.Failures, ConfiguredFailure{
-			Operation: failure.Operation,
-			Target:    failure.Target,
-			Error:     failure.Error,
-		})
+		config.Failures = append(config.Failures, ConfiguredFailure(failure))
 	}
 
 	// Apply filesystem state
@@ -102,9 +98,7 @@ func ApplyScenarioToConfig(scenario *Scenario, config *Config) {
 		config.ExistingFiles[file] = content
 	}
 
-	for _, dir := range scenario.Filesystem.ExistingDirectories {
-		config.ExistingDirectories = append(config.ExistingDirectories, dir)
-	}
+	config.ExistingDirectories = append(config.ExistingDirectories, scenario.Filesystem.ExistingDirectories...)
 
 	// Apply running processes
 	for _, proc := range scenario.Processes.Running {

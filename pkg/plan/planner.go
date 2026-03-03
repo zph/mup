@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -53,6 +54,7 @@ func NewValidationError(issues []ValidationIssue) *ValidationError {
 
 // IsValidationError checks if an error is a validation error
 func IsValidationError(err error) bool {
-	_, ok := err.(*ValidationError)
+	validationError := &ValidationError{}
+	ok := errors.As(err, &validationError)
 	return ok
 }

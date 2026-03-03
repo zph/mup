@@ -104,6 +104,8 @@ func ParseTopologyFile(path string) (*Topology, error) {
 }
 
 // applyDefaults applies global configuration to individual nodes
+//
+//nolint:unparam
 func (t *Topology) applyDefaults() error {
 	// Apply defaults to mongod nodes
 	for i := range t.Mongod {
