@@ -1,10 +1,13 @@
 package health
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,25 +131,29 @@ func (c *Checker) Check(ctx context.Context) (*ClusterHealth, error) {
 		}
 	}
 
-	// Add supervisor API ports if configured
+	// Add supervisor API ports if configured (parsed from config file)
 	if c.metadata.SupervisorConfigPath != "" {
-		health.Ports.Supervisor = append(health.Ports.Supervisor, PortInfo{
-			Host:        "localhost",
-			Port:        9001,
-			Service:     "supervisor-api",
-			Description: "Cluster Supervisor API",
-			Status:      "unknown",
-		})
+		if port, err := parseSupervisorHTTPPort(c.metadata.SupervisorConfigPath); err == nil {
+			health.Ports.Supervisor = append(health.Ports.Supervisor, PortInfo{
+				Host:        "localhost",
+				Port:        port,
+				Service:     "supervisor-api",
+				Description: "Cluster Supervisor API",
+				Status:      c.checkPort("localhost", port),
+			})
+		}
 	}
 
 	if c.metadata.Monitoring != nil && c.metadata.Monitoring.SupervisorConfigPath != "" {
-		health.Ports.Supervisor = append(health.Ports.Supervisor, PortInfo{
-			Host:        "localhost",
-			Port:        9002,
-			Service:     "supervisor-api",
-			Description: "Monitoring Supervisor API",
-			Status:      "unknown",
-		})
+		if port, err := parseSupervisorHTTPPort(c.metadata.Monitoring.SupervisorConfigPath); err == nil {
+			health.Ports.Supervisor = append(health.Ports.Supervisor, PortInfo{
+				Host:        "localhost",
+				Port:        port,
+				Service:     "supervisor-api",
+				Description: "Monitoring Supervisor API",
+				Status:      c.checkPort("localhost", port),
+			})
+		}
 	}
 
 	return health, nil
@@ -323,6 +330,7 @@ type ExporterHealth struct {
 	Status string
 }
 
+
 // getMongoDBVersion connects to a MongoDB node and retrieves its version
 func (c *Checker) getMongoDBVersion(ctx context.Context, host string, port int) (string, error) {
 	// Create connection URI
@@ -365,4 +373,46 @@ func (c *Checker) getMongoDBVersion(ctx context.Context, host string, port int) 
 	// Clean up version (remove any suffixes like -rc1, etc. for display)
 	// but keep them if they're there
 	return strings.TrimSpace(version), nil
+}
+
+// parseSupervisorHTTPPort reads a supervisord config file and extracts the
+// inet_http_server port number. Returns an error if the file can't be parsed.
+func parseSupervisorHTTPPort(configPath string) (int, error) {
+	f, err := os.Open(configPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	inHTTPSection := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "[inet_http_server]" {
+			inHTTPSection = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inHTTPSection = false
+			continue
+		}
+		if inHTTPSection && strings.HasPrefix(line, "port") {
+			// Format: "port = 127.0.0.1:39001"
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			addr := strings.TrimSpace(parts[1])
+			// Extract port from host:port
+			if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+				portStr := addr[idx+1:]
+				port, err := strconv.Atoi(portStr)
+				if err != nil {
+					return 0, fmt.Errorf("invalid port in supervisor config: %s", portStr)
+				}
+				return port, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no inet_http_server port found in %s", configPath)
 }

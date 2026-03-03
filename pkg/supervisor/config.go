@@ -57,6 +57,17 @@ func (g *ConfigGenerator) GenerateAll() error {
 		return fmt.Errorf("failed to generate wrapper scripts: %w", err)
 	}
 
+	// Create placeholder monitoring-supervisor.ini if it doesn't exist.
+	// The [include] section references this file, and supervisord fails to
+	// register programs when an included file is missing.
+	// The real monitoring config is generated later in Phase 4.5.
+	monitoringConfigPath := filepath.Join(g.clusterDir, "monitoring-supervisor.ini")
+	if _, err := os.Stat(monitoringConfigPath); os.IsNotExist(err) {
+		if err := os.WriteFile(monitoringConfigPath, []byte("; placeholder for monitoring programs\n"), 0644); err != nil {
+			return fmt.Errorf("failed to create monitoring config placeholder: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -78,11 +89,13 @@ func (g *ConfigGenerator) GenerateUnifiedConfig() error {
 	fmt.Fprintf(file, "identifier = %s\n\n", g.clusterName)
 
 	// Write HTTP server section with unique port per cluster
-	// Use hash of cluster name to generate a port in range 19000-19999
-	// This avoids conflicts when running multiple clusters
 	httpPort := g.getSupervisorHTTPPort()
 	fmt.Fprintf(file, "[inet_http_server]\n")
 	fmt.Fprintf(file, "port = 127.0.0.1:%d\n\n", httpPort)
+
+	// Write supervisorctl section so ctl commands connect to the correct daemon
+	fmt.Fprintf(file, "[supervisorctl]\n")
+	fmt.Fprintf(file, "serverurl = http://127.0.0.1:%d\n\n", httpPort)
 
 	// Write all config server programs
 	for _, node := range g.topology.ConfigSvr {
@@ -323,6 +336,10 @@ func (g *ConfigGenerator) GenerateMainConfigWithIncludes() error {
 	fmt.Fprintf(file, "[inet_http_server]\n")
 	fmt.Fprintf(file, "port = 127.0.0.1:%d\n\n", httpPort)
 
+	// Write supervisorctl section so ctl commands connect to the correct daemon
+	fmt.Fprintf(file, "[supervisorctl]\n")
+	fmt.Fprintf(file, "serverurl = http://127.0.0.1:%d\n\n", httpPort)
+
 	// Write include section with all per-node configs
 	fmt.Fprintf(file, "[include]\n")
 	fmt.Fprintf(file, "files = ")
@@ -372,7 +389,7 @@ func (g *ConfigGenerator) GenerateMainConfig() error {
 		ClusterName: g.clusterName,
 		LogFile:     filepath.Join(g.clusterDir, "supervisor.log"),
 		PidFile:     filepath.Join(g.clusterDir, "supervisor.pid"),
-		HTTPPort:    9001, // TODO: make configurable or auto-allocate
+		HTTPPort:    g.getSupervisorHTTPPort(),
 	}
 
 	configPath := filepath.Join(g.clusterDir, "supervisor.ini")
@@ -504,6 +521,9 @@ identifier = {{.ClusterName}}
 
 [inet_http_server]
 port = 127.0.0.1:{{.HTTPPort}}
+
+[supervisorctl]
+serverurl = http://127.0.0.1:{{.HTTPPort}}
 
 [include]
 files = {{.ClusterDir}}/conf/*/supervisor-*.ini

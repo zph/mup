@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
+)
+
+const (
+	// DefaultSupervisorBasePort is the starting port for supervisor HTTP API scanning
+	DefaultSupervisorBasePort = 39001
+	// MaxSupervisorPortScanAttempts limits how many ports to try
+	MaxSupervisorPortScanAttempts = 100
 )
 
 // Manager wraps supervisord binary functionality for managing MongoDB processes
@@ -493,4 +501,21 @@ func GetSupervisorHTTPPortForDir(clusterDir string) int {
 // getSupervisorHTTPPort is the internal version that maintains backwards compatibility
 func getSupervisorHTTPPort(clusterDir string) int {
 	return GetSupervisorHTTPPortForDir(clusterDir)
+}
+
+// FindAvailablePort scans from DefaultSupervisorBasePort to find an available TCP port
+// for the supervisord HTTP API. Uses bind-and-close to verify availability.
+func FindAvailablePort() (int, error) {
+	for i := 0; i < MaxSupervisorPortScanAttempts; i++ {
+		port := DefaultSupervisorBasePort + i
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		listener.Close()
+		return port, nil
+	}
+	return 0, fmt.Errorf("no available port found in range %d-%d",
+		DefaultSupervisorBasePort, DefaultSupervisorBasePort+MaxSupervisorPortScanAttempts-1)
 }

@@ -176,6 +176,66 @@ func TestConfigGenerator_GenerateAll(t *testing.T) {
 		programName := fmt.Sprintf("[program:mongod-%d]", node.Port)
 		assert.Contains(t, nodeConfigStr, programName, "Per-node config should include program definition for %s:%d", node.Host, node.Port)
 	}
+
+	// Verify monitoring placeholder was created
+	monitoringPath := filepath.Join(tempDir, "monitoring-supervisor.ini")
+	_, err = os.Stat(monitoringPath)
+	require.NoError(t, err, "monitoring-supervisor.ini placeholder should be created")
+}
+
+func TestConfigGenerator_GenerateAll_PreservesExistingMonitoringConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	clusterName := "test-cluster"
+
+	topo := &topology.Topology{
+		Global: topology.GlobalConfig{
+			DeployDir: tempDir,
+		},
+		Mongod: []topology.MongodNode{
+			{Host: "localhost", Port: 27017, ReplicaSet: "rs0"},
+		},
+	}
+
+	// Pre-create a monitoring config with real content
+	monitoringPath := filepath.Join(tempDir, "monitoring-supervisor.ini")
+	existingContent := "[program:monitoring-vm]\ncommand = /usr/bin/vm\n"
+	require.NoError(t, os.WriteFile(monitoringPath, []byte(existingContent), 0644))
+
+	gen := NewConfigGenerator(tempDir, clusterName, topo, "7.0", "/tmp/mongodb-7.0/bin")
+	require.NoError(t, gen.GenerateAll())
+
+	// Verify existing monitoring config was NOT overwritten
+	content, err := os.ReadFile(monitoringPath)
+	require.NoError(t, err)
+	assert.Equal(t, existingContent, string(content), "existing monitoring config should not be overwritten")
+}
+
+func TestFindAvailablePort(t *testing.T) {
+	port, err := FindAvailablePort()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, port, DefaultSupervisorBasePort)
+	assert.Less(t, port, DefaultSupervisorBasePort+MaxSupervisorPortScanAttempts)
+}
+
+func TestConfigGenerator_GenerateAll_HasSupervisorctlSection(t *testing.T) {
+	tempDir := t.TempDir()
+
+	topo := &topology.Topology{
+		Global: topology.GlobalConfig{DeployDir: tempDir},
+		Mongod: []topology.MongodNode{
+			{Host: "localhost", Port: 27017},
+		},
+	}
+
+	gen := NewConfigGenerator(tempDir, "test", topo, "7.0", "/tmp/bin")
+	require.NoError(t, gen.GenerateAll())
+
+	content, err := os.ReadFile(filepath.Join(tempDir, "supervisor.ini"))
+	require.NoError(t, err)
+	configStr := string(content)
+	assert.Contains(t, configStr, "[supervisorctl]")
+	assert.Contains(t, configStr, "serverurl = http://127.0.0.1:")
+	assert.Contains(t, configStr, "[inet_http_server]")
 }
 
 func TestManager_IsRunning(t *testing.T) {
