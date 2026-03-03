@@ -25,7 +25,7 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 
 	// Create sharded cluster topology
 	topo := &topology.Topology{
-		ConfigSvr: []topology.MongodNode{
+		ConfigSvr: []topology.ConfigNode{
 			{Host: "localhost", Port: 30000, ReplicaSet: "configRS"},
 			{Host: "localhost", Port: 30001, ReplicaSet: "configRS"},
 			{Host: "localhost", Port: 30002, ReplicaSet: "configRS"},
@@ -96,7 +96,7 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 	// Test 3: Simulate directory creation and verify structure
 	t.Run("DirectoryStructure", func(t *testing.T) {
 		// Create path resolver
-		resolver := paths.NewPathResolver(clusterDir, version)
+		resolver := paths.NewLocalPathResolver(clusterDir, version)
 
 		// Create deployer
 		exec := executor.NewLocalExecutor()
@@ -104,13 +104,20 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 			"localhost": exec,
 		}
 
-		templateMgr := template.NewManager()
+		templateMgr, err := template.NewManager()
+		if err != nil {
+			t.Fatalf("Failed to create template manager: %v", err)
+		}
+
+		layout := paths.NewClusterLayout(clusterDir)
+
 		deployer := &Deployer{
 			topology:     topo,
 			clusterName:  "test-cluster",
 			version:      version,
 			metaDir:      clusterDir,
 			pathResolver: resolver,
+			layout:       layout,
 			executors:    executors,
 			templateMgr:  templateMgr,
 		}
@@ -172,21 +179,20 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 
 		generator := supervisor.NewConfigGenerator(
 			versionDir,
-			tmpDir,
 			"test-cluster",
 			topo,
 			version,
 			binPath,
 		)
 
-		// Generate configs for each node type
-		t.Run("ConfigServerSupervisorConfig", func(t *testing.T) {
-			for _, node := range topo.ConfigSvr {
-				if err := generator.GenerateNodeSupervisorConfig("config", node.Host, node.Port, node.ReplicaSet, true); err != nil {
-					t.Fatalf("Failed to generate config server supervisor config: %v", err)
-				}
+		// Generate all per-node configs at once
+		t.Run("PerNodeSupervisorConfigs", func(t *testing.T) {
+			if err := generator.GeneratePerNodeConfigs(); err != nil {
+				t.Fatalf("Failed to generate per-node supervisor configs: %v", err)
+			}
 
-				// Verify supervisor config file exists in correct location
+			// Verify config server supervisor configs
+			for _, node := range topo.ConfigSvr {
 				expectedPath := filepath.Join(
 					versionDir,
 					naming.GetProcessDir("config", node.Port),
@@ -196,14 +202,9 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 					t.Errorf("Supervisor config not found at expected path: %s", expectedPath)
 				}
 			}
-		})
 
-		t.Run("MongodSupervisorConfig", func(t *testing.T) {
+			// Verify mongod supervisor configs
 			for _, node := range topo.Mongod {
-				if err := generator.GenerateNodeSupervisorConfig("mongod", node.Host, node.Port, node.ReplicaSet, false); err != nil {
-					t.Fatalf("Failed to generate mongod supervisor config: %v", err)
-				}
-
 				expectedPath := filepath.Join(
 					versionDir,
 					naming.GetProcessDir("mongod", node.Port),
@@ -213,14 +214,9 @@ func TestShardedClusterNamingConsistency(t *testing.T) {
 					t.Errorf("Supervisor config not found at expected path: %s", expectedPath)
 				}
 			}
-		})
 
-		t.Run("MongosSupervisorConfig", func(t *testing.T) {
+			// Verify mongos supervisor configs
 			for _, node := range topo.Mongos {
-				if err := generator.GenerateMongosNodeSupervisorConfig(node.Host, node.Port); err != nil {
-					t.Fatalf("Failed to generate mongos supervisor config: %v", err)
-				}
-
 				expectedPath := filepath.Join(
 					versionDir,
 					naming.GetProcessDir("mongos", node.Port),
@@ -296,14 +292,11 @@ func TestLogFileNaming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.nodeType, func(t *testing.T) {
-			// Verify the log naming pattern is simple (just node type)
-			// This is enforced by the config generation code
-			expectedLogName := tt.expectedLogName
-
-			// The actual log file name should be just the node type + .log
-			// Not including host/port information
-			if expectedLogName != tt.nodeType+".log" {
-				t.Errorf("Log file name should be simple: %q", expectedLogName)
+			// All node types use the same simple log file name "process.log"
+			// rather than including host/port information
+			if tt.expectedLogName != "process.log" {
+				t.Errorf("Log file name should be simple: got %q, want %q",
+					tt.expectedLogName, "process.log")
 			}
 		})
 	}
