@@ -154,7 +154,10 @@ func (h *CopyBinaryHandler) IsComplete(ctx context.Context, op *plan.PlannedOper
 	}
 
 	// Determine which shell binary to check using shared utility
-	shellBinary := mongo.GetShellBinary(version)
+	shellBinary, err := mongo.GetShellBinary(version)
+	if err != nil {
+		return false, fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 
 	mongodPath := filepath.Join(destDir, "mongod")
 	shellPath := filepath.Join(destDir, shellBinary)
@@ -196,7 +199,10 @@ func (h *CopyBinaryHandler) Execute(ctx context.Context, op *plan.PlannedOperati
 	}
 
 	// Determine which shell binary to copy based on MongoDB version using shared utility
-	shellBinary := mongo.GetShellBinary(version)
+	shellBinary, err := mongo.GetShellBinary(version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 
 	// Binary files to copy
 	binaries := []string{"mongod", "mongos", shellBinary}
@@ -243,7 +249,10 @@ func (h *CopyBinaryHandler) PostHook(ctx context.Context, op *plan.PlannedOperat
 	version, _ := op.Params["version"].(string)
 
 	// Determine which shell binary to verify using shared utility
-	shellBinary := mongo.GetShellBinary(version)
+	shellBinary, err := mongo.GetShellBinary(version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 
 	binaries := []string{"mongod", "mongos", shellBinary}
 

@@ -86,7 +86,7 @@ mongo "mongodb://localhost:27017"    # For older MongoDB versions
 mongodb://localhost:27017
 ```
 
-The `mup playground connect` command automatically reads the cluster info and uses the appropriate MongoDB shell binary (legacy `mongo` for older versions, `mongosh` for newer versions) with the correct connection string.
+The `mup playground connect` command automatically reads the cluster info and uses an available MongoDB shell with the correct connection string.
 
 ### Stop Playground
 
@@ -557,6 +557,14 @@ Mup follows these design principles:
 4. **Zero Downtime**: Rolling operations for production changes
 
 See [DESIGN.md](DESIGN.md) for detailed architecture documentation.
+
+For managed cluster deployments, shell acquisition follows server wire-protocol compatibility:
+
+| MongoDB server | Shell used by Mup | Source |
+|---|---|---|
+| 3.6 | `mongo` | MongoDB server archive |
+| 4.0 | `mongosh` 2.5.1 | Separate pinned download |
+| 4.2+ | `mongosh` 2.5.9 | Separate pinned download |
 
 ## Development
 

@@ -554,7 +554,10 @@ Examples:
 		}
 
 		// Get correct shell binary based on MongoDB version
-		shellBinary := mongo.GetShellBinary(metadata.Version)
+		shellBinary, err := mongo.GetShellBinary(metadata.Version)
+		if err != nil {
+			return fmt.Errorf("failed to select MongoDB shell: %w", err)
+		}
 
 		// Construct cluster-local binary path
 		clusterDir := metaMgr.GetClusterDir(clusterName)

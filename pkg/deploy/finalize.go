@@ -28,7 +28,9 @@ func (d *Deployer) finalize(ctx context.Context) error {
 	}
 
 	// Step 2: Display cluster info
-	d.displayClusterInfo()
+	if err := d.displayClusterInfo(); err != nil {
+		return fmt.Errorf("failed to display cluster information: %w", err)
+	}
 
 	fmt.Println("✓ Phase 5 complete: Deployment finalized")
 	return nil
@@ -84,7 +86,10 @@ func (d *Deployer) saveMetadata(_ context.Context) error {
 
 	// Build metadata
 	connectionString := d.getConnectionString()
-	connectionCommand := d.getConnectionCommand(connectionString)
+	connectionCommand, err := d.getConnectionCommand(connectionString)
+	if err != nil {
+		return fmt.Errorf("failed to build connection command: %w", err)
+	}
 
 	metadata := ClusterMetadata{
 		Name:      d.clusterName,
@@ -214,7 +219,7 @@ func (d *Deployer) collectNodeMetadata() []NodeMetadata {
 }
 
 // displayClusterInfo displays information about the deployed cluster
-func (d *Deployer) displayClusterInfo() {
+func (d *Deployer) displayClusterInfo() error {
 	fmt.Println("\n" + repeatString("=", 60))
 	fmt.Println("Cluster Deployed Successfully!")
 	fmt.Println(repeatString("=", 60))
@@ -265,7 +270,10 @@ func (d *Deployer) displayClusterInfo() {
 
 	// Display connection instructions
 	connectionString := d.getConnectionString()
-	shellBinary := mongo.GetShellBinary(d.version)
+	shellBinary, err := mongo.GetShellBinary(d.version)
+	if err != nil {
+		return fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 	fmt.Printf("Connection URI: %s\n", connectionString)
 	fmt.Printf("\nTo connect:\n")
 	fmt.Printf("  %s \"%s\"\n", shellBinary, connectionString)
@@ -288,6 +296,7 @@ func (d *Deployer) displayClusterInfo() {
 	}
 
 	fmt.Println("\n" + repeatString("=", 60))
+	return nil
 }
 
 // getConnectionString builds the MongoDB connection string
@@ -327,16 +336,19 @@ func (d *Deployer) getConnectionString() string {
 }
 
 // getConnectionCommand builds the command to connect to the cluster
-func (d *Deployer) getConnectionCommand(connectionString string) string {
+func (d *Deployer) getConnectionCommand(connectionString string) (string, error) {
 	// Use cluster-local binary from versioned bin directory
 	// Get the correct shell binary based on MongoDB version
-	shellBinary := mongo.GetShellBinary(d.version)
+	shellBinary, err := mongo.GetShellBinary(d.version)
+	if err != nil {
+		return "", fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 
 	// Use cluster-local versioned bin directory: <cluster_dir>/v<version>/bin/
 	clusterBinDir := filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), "bin")
 	shellPath := filepath.Join(clusterBinDir, shellBinary)
 
-	return fmt.Sprintf("%s \"%s\"", shellPath, connectionString)
+	return fmt.Sprintf("%s \"%s\"", shellPath, connectionString), nil
 }
 
 // repeatString creates a string by repeating a character n times

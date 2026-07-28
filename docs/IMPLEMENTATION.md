@@ -1846,7 +1846,7 @@ if len(p.topology.ConfigSvr) > 0 || len(p.topology.Mongos) > 0 {
 
 #### Bug 3: Missing Version-Aware Binary Handling
 
-**Problem**: System always tried to copy `mongosh` for all MongoDB versions, but MongoDB 3.x and 4.x use `mongo` shell, not `mongosh`. This caused deployment failures for older versions:
+**Problem**: System always tried to copy `mongosh` for all MongoDB versions, but supported MongoDB 3.6 deployments use the legacy `mongo` shell. This caused deployment failures for older versions:
 ```
 failed to copy mongosh: failed to read source file:
 open /Users/zph/.mup/storage/packages/mongo-3.6.23-darwin-amd64/bin/mongosh:
@@ -1855,32 +1855,36 @@ no such file or directory
 
 **Root Cause**: Binary copy logic didn't account for version differences.
 
-**Fix**: Created shared version utility module and updated all relevant code:
+**Fix**: Created a shared wire-protocol compatibility policy and updated all relevant code.
+
+The policy selects both the shell binary and how Mup acquires it:
+
+| MongoDB server | Compatibility floor | Selected shell | Acquisition |
+|---|---:|---|---|
+| 3.6 | Wire version 6 | `mongo` | Bundled in the server archive |
+| 4.0 | Wire version 7 | `mongosh` 2.5.1 (Node.js driver 6.16.0) | Separate download |
+| 4.2+ | Wire version 8 or newer | `mongosh` 2.5.9 (Node.js driver 6.19.0) | Separate download |
+
+The wire versions are compatibility floors used for shell selection. Newer
+servers can report higher `maxWireVersion` values while using the same policy
+row.
 
 **New Module Created**: `pkg/mongo/version.go`
 ```go
-// GetShellBinary returns the appropriate MongoDB shell binary name
-// MongoDB 5.0+ uses "mongosh", earlier versions use "mongo"
-func GetShellBinary(version string) string {
-    if IsVersion5OrHigher(version) {
-        return "mongosh"
-    }
-    return "mongo"
+type ShellCompatibility struct {
+    Binary             string
+    Source             ShellSource
+    ShellVersion       string
+    NodeDriverVersion  string
+    MinimumWireVersion int
 }
 
-func IsVersion5OrHigher(version string) bool {
-    parts := strings.Split(version, ".")
-    if len(parts) == 0 {
-        return false
-    }
-    major := 0
-    fmt.Sscanf(parts[0], "%d", &major)
-    return major >= 5
-}
+func ResolveShellCompatibility(version string) (ShellCompatibility, error)
 ```
 
 **Files Modified**:
-- `pkg/mongo/version.go` - Created shared version utility
+- `pkg/mongo/version.go` - Defines the shared shell compatibility and acquisition policy
+- `pkg/deploy/binary_manager.go` - Acquires the selected bundled or separately downloaded shell
 - `pkg/operation/handlers.go` - Updated `CopyBinaryHandler` to use version-aware binary selection
 - `pkg/deploy/finalize.go` - Updated connection display to show correct shell binary
 - `pkg/cluster/display.go` - Updated cluster display to show correct shell binary
@@ -1896,7 +1900,7 @@ func IsVersion5OrHigher(version string) bool {
 │   ├── bin/
 │   │   ├── mongod           # Cluster-local copy
 │   │   ├── mongos           # Cluster-local copy
-│   │   └── mongosh          # Cluster-local copy (or mongo for <5.0)
+│   │   └── mongosh          # Cluster-local copy (or mongo for MongoDB 3.6)
 │   ├── conf/
 │   └── logs/
 └── meta.yaml
@@ -1907,7 +1911,7 @@ func IsVersion5OrHigher(version string) bool {
 1. **New Operation Type**: `OpCopyBinary` (`pkg/plan/plan.go:70`)
 
 2. **CopyBinaryHandler**: Copies binaries from global storage to cluster-local bin directory (`pkg/operation/handlers.go:173-235`)
-   - Version-aware: copies `mongo` for MongoDB <5.0, `mongosh` for >=5.0
+   - Wire-compatible: copies bundled `mongo` for MongoDB 3.6 and a pinned `mongosh` for MongoDB 4.0+
    - Copies mongod, mongos, and shell binary
    - Sets executable permissions
    - Works with both local and remote executors
@@ -1935,11 +1939,14 @@ func IsVersion5OrHigher(version string) bool {
    - Removed hashicorp/go-version dependency (simpler implementation)
 
 ```go
-func (d *Deployer) getConnectionCommand(connectionString string) string {
-    shellBinary := mongo.GetShellBinary(d.version)
+func (d *Deployer) getConnectionCommand(connectionString string) (string, error) {
+    shellBinary, err := mongo.GetShellBinary(d.version)
+    if err != nil {
+        return "", err
+    }
     clusterBinDir := filepath.Join(d.metaDir, fmt.Sprintf("v%s", d.version), "bin")
     shellPath := filepath.Join(clusterBinDir, shellBinary)
-    return fmt.Sprintf("%s \"%s\"", shellPath, connectionString)
+    return fmt.Sprintf("%s \"%s\"", shellPath, connectionString), nil
 }
 ```
 

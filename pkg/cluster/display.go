@@ -121,7 +121,10 @@ func (m *Manager) displayText(metadata *meta.ClusterMetadata) error {
 	fmt.Println("CONNECTION")
 	fmt.Println(strings.Repeat("━", 70))
 	connStr := m.getConnectionString(metadata)
-	shellBinary := mongo.GetShellBinary(metadata.Version)
+	shellBinary, err := mongo.GetShellBinary(metadata.Version)
+	if err != nil {
+		return fmt.Errorf("failed to select MongoDB shell: %w", err)
+	}
 
 	// Construct cluster-local binary path
 	clusterDir := m.metaMgr.GetClusterDir(metadata.Name)

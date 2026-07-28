@@ -2,15 +2,19 @@ package deploy
 
 import (
 	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -703,4 +707,119 @@ func TestBinaryManager_constructFallbackURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBinaryManager_ensureShell_UsesBundledMongoForMongoDB36(t *testing.T) {
+	binPath := t.TempDir()
+	mongoPath := filepath.Join(binPath, "mongo")
+	if err := os.WriteFile(mongoPath, []byte("bundled mongo shell"), 0755); err != nil {
+		t.Fatalf("failed to create bundled mongo shell: %v", err)
+	}
+
+	bm := &BinaryManager{}
+	platform := Platform{OS: "darwin", Arch: "amd64"}
+	if err := bm.ensureShell("3.6.23", platform, binPath); err != nil {
+		t.Fatalf("ensureShell() error = %v", err)
+	}
+}
+
+func TestBinaryManager_ensureMongosh_ReplacesUnversionedCachedShell(t *testing.T) {
+	const (
+		archivePath   = "/v2.5.1/mongosh-2.5.1-darwin-x64.zip"
+		shellContents = "compatible mongosh 2.5.1"
+	)
+
+	archive := createTestMongoshZip(t, "mongosh-2.5.1-darwin-x64/bin/mongosh", shellContents)
+	var requestCount atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requestCount.Add(1)
+		if r.URL.Path != archivePath {
+			return testHTTPResponse(r, http.StatusNotFound, nil), nil
+		}
+		if r.Method == http.MethodHead {
+			return testHTTPResponse(r, http.StatusOK, nil), nil
+		}
+		if r.Method != http.MethodGet {
+			return testHTTPResponse(r, http.StatusMethodNotAllowed, nil), nil
+		}
+		return testHTTPResponse(r, http.StatusOK, archive), nil
+	})}
+
+	binPath := t.TempDir()
+	mongoshPath := filepath.Join(binPath, "mongosh")
+	if err := os.WriteFile(mongoshPath, []byte("incompatible mongosh 2.5.9"), 0755); err != nil {
+		t.Fatalf("failed to create stale mongosh: %v", err)
+	}
+
+	bm := &BinaryManager{
+		httpClient:            client,
+		mongoshReleaseBaseURL: "https://mongosh.test",
+	}
+	platform := Platform{OS: "darwin", Arch: "amd64"}
+	if err := bm.ensureMongosh("4.0.28", platform, binPath); err != nil {
+		t.Fatalf("ensureMongosh() error = %v", err)
+	}
+
+	gotShell, err := os.ReadFile(mongoshPath)
+	if err != nil {
+		t.Fatalf("failed to read installed mongosh: %v", err)
+	}
+	if string(gotShell) != shellContents {
+		t.Errorf("installed mongosh = %q, want %q", gotShell, shellContents)
+	}
+
+	gotVersion, err := os.ReadFile(filepath.Join(binPath, mongoshVersionFile))
+	if err != nil {
+		t.Fatalf("failed to read mongosh version marker: %v", err)
+	}
+	if string(gotVersion) != "2.5.1\n" {
+		t.Errorf("mongosh version marker = %q, want %q", gotVersion, "2.5.1\n")
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("release server request count = %d, want 2 (HEAD and GET)", got)
+	}
+
+	// The compatibility marker makes subsequent cache checks deterministic and
+	// prevents another download.
+	if err := bm.ensureMongosh("4.0.28", platform, binPath); err != nil {
+		t.Fatalf("second ensureMongosh() error = %v", err)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Errorf("release server request count after cache hit = %d, want 2", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func testHTTPResponse(request *http.Request, statusCode int, body []byte) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    request,
+	}
+}
+
+func createTestMongoshZip(t *testing.T, name, contents string) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zipWriter := zip.NewWriter(&buf)
+	header := &zip.FileHeader{Name: name, Method: zip.Store}
+	header.SetMode(0755)
+	file, err := zipWriter.CreateHeader(header)
+	if err != nil {
+		t.Fatalf("failed to create mongosh zip entry: %v", err)
+	}
+	if _, err := file.Write([]byte(contents)); err != nil {
+		t.Fatalf("failed to write mongosh zip entry: %v", err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("failed to close mongosh zip: %v", err)
+	}
+	return buf.Bytes()
 }

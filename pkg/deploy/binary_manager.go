@@ -20,6 +20,13 @@ import (
 	"golang.org/x/mod/semver"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+
+	"github.com/zph/mup/pkg/mongo"
+)
+
+const (
+	mongoshVersionFile    = ".mongosh-version"
+	mongoshReleaseBaseURL = "https://github.com/mongodb-js/mongosh/releases/download"
 )
 
 // Platform represents a target platform for MongoDB binaries
@@ -49,6 +56,10 @@ type BinaryManager struct {
 	mu          sync.Mutex
 	versionJSON *MongoDBFullJSON // Cached version data
 	versionMu   sync.Mutex
+	httpClient  *http.Client
+
+	// mongoshReleaseBaseURL is overridden by tests to serve release archives locally.
+	mongoshReleaseBaseURL string
 }
 
 // NewBinaryManager creates a new binary manager
@@ -72,6 +83,13 @@ func NewBinaryManager() (*BinaryManager, error) {
 func (bm *BinaryManager) Close() error {
 	// Nothing to clean up currently
 	return nil
+}
+
+func (bm *BinaryManager) client() *http.Client {
+	if bm.httpClient != nil {
+		return bm.httpClient
+	}
+	return http.DefaultClient
 }
 
 // getMongoDBVersions fetches or loads cached MongoDB versions
@@ -208,21 +226,8 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 			mongodPath = filepath.Join(binPath, "mongod.exe")
 		}
 		if _, err := os.Stat(mongodPath); err == nil {
-			// Also ensure shell is available (mongosh for >= 4.0, mongo for < 4.0)
-			versionParts := strings.Split(version, ".")
-			if len(versionParts) >= 2 {
-				majorVersion := versionParts[0]
-				if majorVersion >= "4" {
-					if err := bm.ensureMongosh(version, platform, binPath); err != nil {
-						// Log warning but don't fail - mongosh might not be available for all versions
-						fmt.Printf("  Warning: failed to ensure mongosh: %v\n", err)
-					}
-				} else {
-					if err := bm.ensureMongo(version, platform, binPath); err != nil {
-						// Log warning but don't fail - mongo might not be available for all versions
-						fmt.Printf("  Warning: failed to ensure mongo: %v\n", err)
-					}
-				}
+			if err := bm.ensureShell(version, platform, binPath); err != nil {
+				return "", fmt.Errorf("failed to ensure a compatible MongoDB shell: %w", err)
 			}
 			fmt.Printf("  ✓ MongoDB %s for %s cached at %s\n", version, platformKey, binPath)
 			return binPath, nil
@@ -361,24 +366,10 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 		}
 	}
 
-	// Ensure shell is available in the same bin directory
-	// mongosh (>= 4.0) or mongo (< 4.0) is not always included in server archives
-	versionParts := strings.Split(version, ".")
-	if len(versionParts) >= 2 {
-		majorVersion := versionParts[0]
-		if majorVersion >= "4" {
-			// MongoDB >= 4.0: ensure mongosh
-			if err := bm.ensureMongosh(version, platform, binPath); err != nil {
-				// Log warning but don't fail - mongosh might not be available for all versions
-				fmt.Printf("  Warning: failed to ensure mongosh: %v\n", err)
-			}
-		} else {
-			// MongoDB < 4.0: ensure mongo (legacy shell)
-			if err := bm.ensureMongo(version, platform, binPath); err != nil {
-				// Log warning but don't fail - mongo might not be available for all versions
-				fmt.Printf("  Warning: failed to ensure mongo: %v\n", err)
-			}
-		}
+	// A package is complete only when it includes the shell selected for the
+	// server's wire protocol.
+	if err := bm.ensureShell(version, platform, binPath); err != nil {
+		return "", fmt.Errorf("failed to ensure a compatible MongoDB shell: %w", err)
 	}
 
 	fmt.Printf("  ✓ %s %s for %s cached at %s\n", cases.Title(language.English).String(variant.String()), version, platformKey, binPath)
@@ -1179,42 +1170,67 @@ func (bm *BinaryManager) copyBinaries(sourceBinDir, targetBinDir string) error {
 	return nil
 }
 
+func (bm *BinaryManager) ensureShell(version string, platform Platform, binPath string) error {
+	compatibility, err := mongo.ResolveShellCompatibility(version)
+	if err != nil {
+		return err
+	}
+
+	switch compatibility.Source {
+	case mongo.ShellSourceDownload:
+		return bm.ensureMongosh(version, platform, binPath)
+	case mongo.ShellSourceServerArchive:
+		return bm.ensureMongo(version, platform, binPath)
+	default:
+		return fmt.Errorf(
+			"unsupported shell acquisition source %q for MongoDB %s",
+			compatibility.Source, version,
+		)
+	}
+}
+
 // ensureMongosh ensures mongosh is available in the binPath directory
 // mongosh is downloaded separately from the server binaries (from GitHub releases)
 func (bm *BinaryManager) ensureMongosh(version string, platform Platform, binPath string) error {
-	// Check if mongosh already exists
+	compatibility, err := mongo.ResolveShellCompatibility(version)
+	if err != nil {
+		return err
+	}
+	if compatibility.Binary != "mongosh" || compatibility.Source != mongo.ShellSourceDownload {
+		return fmt.Errorf(
+			"MongoDB %s uses %s from %s, not a separately downloaded mongosh",
+			version, compatibility.Binary, compatibility.Source,
+		)
+	}
+	mongoshVersion := compatibility.ShellVersion
+
 	mongoshPath := filepath.Join(binPath, "mongosh")
 	if platform.OS == "windows" {
 		mongoshPath = filepath.Join(binPath, "mongosh.exe")
 	}
+	versionPath := filepath.Join(binPath, mongoshVersionFile)
+
 	if _, err := os.Stat(mongoshPath); err == nil {
-		// mongosh already exists
-		fmt.Printf("  ✓ mongosh already exists at %s\n", mongoshPath)
-		return nil
+		installedVersion, readErr := os.ReadFile(versionPath)
+		if readErr == nil && strings.TrimSpace(string(installedVersion)) == mongoshVersion {
+			fmt.Printf("  ✓ mongosh %s already exists at %s\n", mongoshVersion, mongoshPath)
+			return nil
+		}
+
+		// Packages created before the version marker existed may contain an
+		// incompatible mongosh. Refresh them once instead of trusting the binary.
+		fmt.Printf("  Updating mongosh for MongoDB %s to pinned version %s (Node.js driver %s, minimum wire version %d)...\n",
+			version, mongoshVersion, compatibility.NodeDriverVersion, compatibility.MinimumWireVersion)
 	}
 
-	// mongosh is only available for MongoDB >= 4.0
-	// Check version
-	versionParts := strings.Split(version, ".")
-	if len(versionParts) < 2 {
-		return fmt.Errorf("invalid version format for mongosh check")
-	}
-	majorVersion := versionParts[0]
-	if majorVersion < "4" {
-		// mongosh not available for versions < 4.0
-		return nil
-	}
-
-	// Get latest mongosh version and download URL
-	// mongosh version doesn't need to match MongoDB server version
-	mongoshVersion, mongoshURL, err := bm.getLatestMongoshDownloadURL(platform)
+	mongoshURL, err := bm.getMongoshDownloadURL(mongoshVersion, platform)
 	if err != nil {
 		return fmt.Errorf("failed to get mongosh download URL: %w", err)
 	}
 
 	fmt.Printf("  Downloading mongosh %s for %s from %s...\n", mongoshVersion, platform.Key(), mongoshURL)
 	// Download mongosh archive
-	resp, err := http.Get(mongoshURL)
+	resp, err := bm.client().Get(mongoshURL)
 	if err != nil {
 		return fmt.Errorf("failed to download mongosh: %w", err)
 	}
@@ -1274,9 +1290,6 @@ func (bm *BinaryManager) ensureMongosh(version string, platform Platform, binPat
 		return fmt.Errorf("failed to find mongosh binary: %w", err)
 	}
 
-	// Copy mongosh to the same binPath folder as server binaries (mongod, mongos, etc.)
-	// This ensures all MongoDB binaries are in the same location
-	mongoshTarget := filepath.Join(binPath, filepath.Base(mongoshBin))
 	mongoshData, err := os.ReadFile(mongoshBin)
 	if err != nil {
 		return fmt.Errorf("failed to read mongosh binary: %w", err)
@@ -1288,19 +1301,21 @@ func (bm *BinaryManager) ensureMongosh(version string, platform Platform, binPat
 		return fmt.Errorf("failed to stat mongosh binary: %w", err)
 	}
 
-	if err := os.WriteFile(mongoshTarget, mongoshData, info.Mode()); err != nil {
-		return fmt.Errorf("failed to write mongosh binary: %w", err)
+	// Replace the binary only after the compatible release has been fully
+	// downloaded and extracted, preserving a usable cached shell on failure.
+	if err := atomicWriteFile(mongoshPath, mongoshData, info.Mode()); err != nil {
+		return fmt.Errorf("failed to install mongosh binary: %w", err)
+	}
+	if err := atomicWriteFile(versionPath, []byte(mongoshVersion+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to record mongosh version: %w", err)
 	}
 
-	fmt.Printf("  ✓ mongosh %s installed at %s\n", mongoshVersion, mongoshTarget)
+	fmt.Printf("  ✓ mongosh %s installed at %s\n", mongoshVersion, mongoshPath)
 	return nil
 }
 
-// getLatestMongoshDownloadURL gets the mongosh version and download URL from GitHub releases
-// Uses a hardcoded version (2.5.9) to avoid GitHub API rate limiting
-func (bm *BinaryManager) getLatestMongoshDownloadURL(platform Platform) (string, string, error) {
-	// Use hardcoded version to avoid GitHub API rate limiting (403 errors)
-	mongoshVersion := "2.5.9"
+// getMongoshDownloadURL constructs and verifies a pinned mongosh release URL.
+func (bm *BinaryManager) getMongoshDownloadURL(mongoshVersion string, platform Platform) (string, error) {
 	tagName := "v" + mongoshVersion
 
 	// Map Go arch to mongosh arch naming
@@ -1320,7 +1335,7 @@ func (bm *BinaryManager) getLatestMongoshDownloadURL(platform Platform) (string,
 	case "linux":
 		targetOS = "linux"
 	default:
-		return "", "", fmt.Errorf("unsupported OS for mongosh: %s", platform.OS)
+		return "", fmt.Errorf("unsupported OS for mongosh: %s", platform.OS)
 	}
 
 	// Construct download URL directly
@@ -1334,21 +1349,51 @@ func (bm *BinaryManager) getLatestMongoshDownloadURL(platform Platform) (string,
 		ext = "tgz"
 	}
 
-	url := fmt.Sprintf("https://github.com/mongodb-js/mongosh/releases/download/%s/mongosh-%s-%s-%s.%s",
-		tagName, mongoshVersion, targetOS, mongoshArch, ext)
+	baseURL := bm.mongoshReleaseBaseURL
+	if baseURL == "" {
+		baseURL = mongoshReleaseBaseURL
+	}
+	url := fmt.Sprintf("%s/%s/mongosh-%s-%s-%s.%s",
+		strings.TrimRight(baseURL, "/"), tagName, mongoshVersion, targetOS, mongoshArch, ext)
 
 	// Verify URL exists before returning
-	resp, err := http.Head(url)
+	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to verify mongosh URL: %w", err)
+		return "", fmt.Errorf("failed to create mongosh URL verification request: %w", err)
+	}
+	resp, err := bm.client().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to verify mongosh URL: %w", err)
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMovedPermanently && resp.StatusCode != http.StatusFound {
-		return "", "", fmt.Errorf("mongosh download URL not found (HTTP %d): %s", resp.StatusCode, url)
+		return "", fmt.Errorf("mongosh download URL not found (HTTP %d): %s", resp.StatusCode, url)
 	}
 
-	return mongoshVersion, url, nil
+	return url, nil
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	tempFile, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+
+	if _, err := tempFile.Write(data); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Chmod(mode); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
 }
 
 // findMongoshBinary finds the mongosh binary in extracted files
@@ -1382,9 +1427,9 @@ func (bm *BinaryManager) findMongoshBinary(extractDir string, platform Platform)
 	return "", fmt.Errorf("mongosh binary not found in extracted archive")
 }
 
-// ensureMongo ensures mongo (legacy shell) is available in the binPath directory
-// mongo is typically included in server archives for versions < 4.0, but we verify it exists
-func (bm *BinaryManager) ensureMongo(_ string, platform Platform, binPath string) error {
+// ensureMongo ensures the legacy mongo shell bundled with MongoDB 3.6 is
+// available in the binPath directory.
+func (bm *BinaryManager) ensureMongo(version string, platform Platform, binPath string) error {
 	// Check if mongo already exists
 	mongoPath := filepath.Join(binPath, "mongo")
 	if platform.OS == "windows" {
@@ -1395,11 +1440,10 @@ func (bm *BinaryManager) ensureMongo(_ string, platform Platform, binPath string
 		return nil
 	}
 
-	// mongo should be in the server archive for versions < 4.0
-	// If it's not there, it might be a packaging issue
-	// For now, we'll just log that it's missing but not fail
-	// The connection command will fall back to system PATH
-	return fmt.Errorf("mongo binary not found in binPath (expected in server archive for MongoDB < 4.0)")
+	return fmt.Errorf(
+		"mongo binary not found in binPath (expected in the MongoDB %s server archive)",
+		version,
+	)
 }
 
 // CollectPlatforms collects all unique platforms from the topology

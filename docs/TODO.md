@@ -83,8 +83,8 @@ This document tracks the implementation roadmap for Mup commands and features, b
 - [x] Version-specific binary extraction
 - [x] Support for x86_64 and ARM64
 - [x] MongoDB version 3.6 through 8.0 support
-- [x] Automatic mongosh download (version 2.5.9)
-- [x] Automatic mongo (legacy shell) support for < 4.0
+- [x] Automatic mongosh download with wire-protocol-compatible version pins
+- [x] Bundled mongo (legacy shell) selection for MongoDB 3.6 / wire version 6
 - [x] Multi-platform support (darwin, linux)
 - [ ] Checksum verification
 
@@ -278,7 +278,7 @@ mup cluster connect <cluster-name>
 - [x] Load cluster metadata
 - [x] Read connection command from metadata
 - [x] Execute connection command via shell
-- [x] Version-aware shell selection (mongosh for >= 4.0, mongo for < 4.0)
+- [x] Wire-compatible shell selection (`mongo` for MongoDB 3.6; pinned `mongosh` for 4.0+)
 
 ---
 
@@ -551,9 +551,9 @@ mup cluster exec <cluster-name> -- <command> [flags]
 - **Deployment Modes:**
   - Local deployments are fully functional (all Phase 3 commands work)
   - Remote SSH-based deployments are planned for future phases
-- **Binary Management:** MongoDB binaries and shells (mongosh/mongo) are automatically downloaded and cached
+- **Binary Management:** MongoDB binaries and their wire-compatible shells are acquired and cached from the server distribution or a pinned standalone download
 - **Template System:** Version-aware templates handle MongoDB version differences (e.g., `storage.journal.enabled` removed in 6.1+)
 - **Process Management:** Process death detection automatically reads and displays log files when processes die during startup
-- **Connection Commands:** Automatically generated based on MongoDB version (mongosh for >= 4.0, mongo for < 4.0)
+- **Connection Commands:** Generated from the shared wire-protocol shell compatibility policy
 - **Replica Sets & Sharding:** Initialization uses MongoDB Go driver for robust, programmatic configuration
 - **Future Work:** SSH executor, remote deployments, rolling operations, and advanced features are planned
