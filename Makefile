@@ -43,7 +43,7 @@ test-short:
 ## test-integration: Run all integration tests (including binary downloads)
 test-integration:
 	@echo "Running integration tests (this may download binaries)..."
-	$(GOTEST) -v ./...
+	$(GOTEST) -v -tags=integration ./...
 
 ## test-coverage: Run tests with coverage (excluding integration tests)
 test-coverage:

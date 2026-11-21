@@ -7,8 +7,14 @@ import "fmt"
 // so their archives are fixed too.
 //
 // 2.5.9 values are the digests GitHub publishes for the release assets.
-// 2.5.1 predates published digests; its values were computed from the release
-// assets on 2026-11-20 and guard against the archives changing afterwards.
+//
+// 2.5.1 predates published digests. Its values are the hashes of the release
+// assets as downloaded on 2026-11-20, after checking each against the
+// publisher: the Linux archives have a good PGP signature from the "Mongosh
+// Release Signing Key" (fingerprint ED581728F2A469C94D18BB58CEED0419D361CB16,
+// https://pgp.mongodb.com/mongosh.asc), and the mongosh binary inside each
+// macOS archive has a valid code signature from "Developer ID Application:
+// MongoDB, Inc. (4XWMY46275)".
 // LOCAL-034
 var shellArchiveSHA256 = map[string]string{
 	"mongosh-2.5.9-darwin-arm64.zip": "c82af6ec00ca2ef93f13be2c9edb00c23851ce4932ba20411ed028e35e365072",

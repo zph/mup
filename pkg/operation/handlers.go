@@ -1454,7 +1454,10 @@ func (h *AddShardHandler) PostHook(ctx context.Context, op *plan.PlannedOperatio
 
 // VerifyHealthHandler verifies cluster health
 // REQ-PES-036, REQ-PES-047, REQ-PES-048: Four-phase handler
-type VerifyHealthHandler struct{}
+type VerifyHealthHandler struct {
+	// Timeout is how long to wait for every port to listen; zero uses healthCheckTimeout.
+	Timeout time.Duration
+}
 
 // REQ-PES-036: Health check is never complete (always execute)
 func (h *VerifyHealthHandler) IsComplete(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (bool, error) {
@@ -1478,32 +1481,27 @@ func (h *VerifyHealthHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 		return simulatedResult(exec, op, fmt.Sprintf("verify processes listening on ports %v", portsToCheck))
 	}
 
-	// Verify each port is in use (meaning process is listening)
-	var healthyPorts []int
-	var unhealthyPorts []int
-
-	for _, port := range portsToCheck {
+	// LOCAL-045: a process can be RUNNING under its supervisor a little before
+	// it opens its port, so wait for the ports rather than looking once.
+	portListening := func(port int) (bool, error) {
 		available, err := exec.CheckPortAvailable(port)
-		if err != nil {
-			unhealthyPorts = append(unhealthyPorts, port)
-			continue
-		}
-		if !available {
-			// Port is in use - this is good!
-			healthyPorts = append(healthyPorts, port)
-		} else {
-			// Port is available - no process listening
-			unhealthyPorts = append(unhealthyPorts, port)
-		}
+		return !available, err
+	}
+	timeout := h.Timeout
+	if timeout == 0 {
+		timeout = healthCheckTimeout
+	}
+	unhealthyPorts, err := waitForPortsListening(ctx, portsToCheck, portListening, timeout, healthCheckPoll)
+	if err != nil {
+		return nil, err
 	}
 
-	// For now, just report on port status
-	// TODO: Use MongoDB driver to ping each node and check replica set status
-	fmt.Printf("  Health check: %d/%d ports listening\n", len(healthyPorts), len(portsToCheck))
+	fmt.Printf("  Health check: %d/%d ports listening\n", len(portsToCheck)-len(unhealthyPorts), len(portsToCheck))
 
 	if len(unhealthyPorts) > 0 {
-		return nil, fmt.Errorf("health check failed: %d ports not listening: %v", len(unhealthyPorts), unhealthyPorts)
+		return nil, fmt.Errorf("health check failed: %d ports not listening after %s: %v", len(unhealthyPorts), timeout, unhealthyPorts)
 	}
+	healthyPorts := portsToCheck
 
 	return &apply.OperationResult{
 		Success: true,
@@ -1662,6 +1660,47 @@ func topologyParam(raw interface{}) (*topology.Topology, error) {
 		return topo, nil
 	}
 	return nil, fmt.Errorf("topology parameter not found or invalid type")
+}
+
+const (
+	// healthCheckTimeout bounds how long health verification waits for every
+	// node to listen on its port.
+	healthCheckTimeout = 2 * time.Minute
+	healthCheckPoll    = time.Second
+)
+
+// waitForPortsListening polls until every port is listening or timeout
+// passes, and returns the ports that still are not.
+// LOCAL-045
+func waitForPortsListening(ctx context.Context, ports []int, listening func(port int) (bool, error), timeout, poll time.Duration) ([]int, error) {
+	deadline := time.Now().Add(timeout)
+	pending := append([]int(nil), ports...)
+
+	for {
+		var stillPending []int
+		for _, port := range pending {
+			if up, err := listening(port); err != nil || !up {
+				stillPending = append(stillPending, port)
+			}
+		}
+		pending = stillPending
+		if len(pending) == 0 {
+			return nil, nil
+		}
+
+		if err := ctx.Err(); err != nil {
+			return pending, fmt.Errorf("health check interrupted: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return pending, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return pending, fmt.Errorf("health check interrupted: %w", ctx.Err())
+		case <-time.After(poll):
+		}
+	}
 }
 
 // paramPorts is the operation parameter listing ports a health check verifies.

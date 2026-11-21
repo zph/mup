@@ -108,3 +108,5 @@ cover destroy safety, deploy input validation, and simulation purity.
 
 - **LOCAL-042**: The system SHALL bound every supervisor control command with a timeout and stop a command that exceeds it; IF a start command errors or times out but the supervisor reports the program RUNNING, THEN the system SHALL treat the start as successful.
 - **LOCAL-043**: WHEN an exact MongoDB version is requested and its package is already cached, the system SHALL NOT contact the network; the version index fetch SHALL be bounded by a timeout, and IF it fails while an older copy is cached THEN the system SHALL use that copy.
+- **LOCAL-044**: WHEN unpacking a `.deb` package, the system SHALL read the package without external archive tools for gzip, zstd and uncompressed payloads, and SHALL extract only the server executables located directly in `usr/bin`.
+- **LOCAL-045**: WHEN verifying cluster health, the system SHALL wait up to a time limit for every node port to be listening before failing.

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -1105,115 +1104,6 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 		// We need data.tar.* which contains the actual binaries
 		if err := bm.extractDebPackage(debFile, targetBinDir); err != nil {
 			return fmt.Errorf("failed to extract %s: %w", component, err)
-		}
-	}
-
-	return nil
-}
-
-// extractDebPackage extracts binaries from a .deb package
-func (bm *BinaryManager) extractDebPackage(debFile, targetBinDir string) error {
-	// Create temp directory for this .deb
-	tempDir, err := os.MkdirTemp("", "deb-extract-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	// Extract .deb using ar
-	arCmd := exec.Command("ar", "-x", debFile)
-	arCmd.Dir = tempDir
-	if output, err := arCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ar extraction failed: %w\nOutput: %s", err, output)
-	}
-
-	// Find data.tar.* file
-	entries, err := os.ReadDir(tempDir)
-	if err != nil {
-		return fmt.Errorf("failed to read temp directory: %w", err)
-	}
-
-	var dataTar string
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "data.tar") {
-			dataTar = filepath.Join(tempDir, entry.Name())
-			break
-		}
-	}
-
-	if dataTar == "" {
-		return fmt.Errorf("data.tar.* not found in .deb package")
-	}
-
-	// Extract data.tar.* and copy binaries
-	// Binaries are typically in ./usr/bin/
-	dataExtractDir := filepath.Join(tempDir, "data")
-	if err := os.MkdirAll(dataExtractDir, 0755); err != nil {
-		return fmt.Errorf("failed to create data extract directory: %w", err)
-	}
-
-	// Open the data tar file
-	dataFile, err := os.Open(dataTar)
-	if err != nil {
-		return fmt.Errorf("failed to open data tar: %w", err)
-	}
-	defer func() { _ = dataFile.Close() }()
-
-	// Determine compression type and create appropriate reader
-	var tarReader *tar.Reader
-	if strings.HasSuffix(dataTar, ".gz") {
-		gzReader, err := gzip.NewReader(dataFile)
-		if err != nil {
-			return fmt.Errorf("failed to create gzip reader: %w", err)
-		}
-		defer func() { _ = gzReader.Close() }()
-		tarReader = tar.NewReader(gzReader)
-	} else if strings.HasSuffix(dataTar, ".xz") {
-		// xz compression - use external xz command
-		xzCmd := exec.Command("xz", "-dc", dataTar)
-		xzOut, err := xzCmd.StdoutPipe()
-		if err != nil {
-			return fmt.Errorf("failed to create xz pipe: %w", err)
-		}
-		if err := xzCmd.Start(); err != nil {
-			return fmt.Errorf("failed to start xz: %w", err)
-		}
-		defer xzCmd.Wait()
-		tarReader = tar.NewReader(xzOut)
-	} else {
-		tarReader = tar.NewReader(dataFile)
-	}
-
-	// Extract files from tar, looking for binaries in usr/bin/
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read tar: %w", err)
-		}
-
-		// Check if this is a binary we want (mongod, mongos, mongosh, or mongo)
-		if header.Typeflag == tar.TypeReg {
-			baseName := filepath.Base(header.Name)
-			if baseName == "mongod" || baseName == "mongos" || baseName == "mongosh" || baseName == "mongo" {
-				// Extract to target bin directory
-				targetPath := filepath.Join(targetBinDir, baseName)
-
-				outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
-				if err != nil {
-					return fmt.Errorf("failed to create file %s: %w", targetPath, err)
-				}
-
-				if _, err := io.Copy(outFile, tarReader); err != nil {
-					outFile.Close()
-					return fmt.Errorf("failed to write file %s: %w", targetPath, err)
-				}
-				outFile.Close()
-
-				fmt.Printf("  ✓ Extracted %s\n", baseName)
-			}
 		}
 	}
 
