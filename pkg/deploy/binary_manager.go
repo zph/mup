@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +67,10 @@ type BinaryManager struct {
 
 	// mongoshReleaseBaseURL is overridden by tests to serve release archives locally.
 	mongoshReleaseBaseURL string
+
+	// mongoshChecksum returns the expected SHA-256 of a mongosh release
+	// archive by asset name; nil uses the checksums pinned in pkg/mongo.
+	mongoshChecksum func(archiveName string) (string, bool)
 }
 
 // NewBinaryManager creates a new binary manager
@@ -101,6 +107,135 @@ func (bm *BinaryManager) downloadClient() *http.Client {
 		return bm.httpClient
 	}
 	return &http.Client{Timeout: downloadTimeout}
+}
+
+// verifyMongoshArchive checks a downloaded mongosh archive against its
+// pinned checksum. An archive with no pinned checksum is refused.
+// LOCAL-034
+func (bm *BinaryManager) verifyMongoshArchive(archivePath, archiveName string) error {
+	lookup := bm.mongoshChecksum
+	if lookup == nil {
+		lookup = mongo.ShellArchiveSHA256
+	}
+	expected, ok := lookup(archiveName)
+	if !ok {
+		return fmt.Errorf("no pinned checksum for %s; refusing to install an unverified shell", archiveName)
+	}
+	if err := verifySHA256(archivePath, expected); err != nil {
+		return err
+	}
+	fmt.Printf("  ✓ Checksum verified (SHA-256)\n")
+	return nil
+}
+
+// fetchPerconaChecksum records the checksum Percona publishes beside a
+// tarball as <url>.sha256sum. A missing checksum file is not an error: the
+// download then proceeds unverified, as before.
+// LOCAL-035
+func (bm *BinaryManager) fetchPerconaChecksum(tarballURL string) error {
+	resp, err := bm.client().Get(tarballURL + perconaChecksumSuffix)
+	if err != nil {
+		return fmt.Errorf("failed to fetch checksum for %s: %w", path.Base(tarballURL), err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("  ⚠️  No published checksum for %s; it will not be verified\n", path.Base(tarballURL))
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch checksum for %s: HTTP %d", path.Base(tarballURL), resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, perconaChecksumMaxBytes))
+	if err != nil {
+		return fmt.Errorf("failed to read checksum for %s: %w", path.Base(tarballURL), err)
+	}
+	sum, err := parseSHA256SumFile(string(body))
+	if err != nil {
+		return fmt.Errorf("checksum file for %s is malformed: %w", path.Base(tarballURL), err)
+	}
+	bm.rememberChecksum(tarballURL, sum)
+	return nil
+}
+
+// legacyShellMaxMajor is the last major series whose shell is the legacy
+// "mongo" binary shipped as a Percona package.
+const legacyShellMaxMajor = 4
+
+// usesLegacyShellPackage reports whether a Percona version needs the legacy
+// shell .deb. The major version is compared as a number, not as text.
+// LOCAL-041
+func usesLegacyShellPackage(version string) bool {
+	majorText, _, _ := strings.Cut(version, ".")
+	major, err := strconv.Atoi(majorText)
+	if err != nil {
+		return false
+	}
+	return major <= legacyShellMaxMajor
+}
+
+// fetchPerconaDebChecksums records the checksums the Percona apt repository
+// publishes for a set of .deb packages. Every package in the repository pool
+// is listed in its index (checked across the 3.6 to 8.0 series), so a package
+// missing from the index is refused rather than downloaded unverified.
+// LOCAL-038
+func (bm *BinaryManager) fetchPerconaDebChecksums(debURLs map[string]string, distro string) error {
+	indexes := make(map[string]map[string]string) // index URL -> Filename -> SHA256
+	for _, debURL := range debURLs {
+		indexURL, filename, err := aptIndexLocation(debURL, distro)
+		if err != nil {
+			return err
+		}
+
+		sums, fetched := indexes[indexURL]
+		if !fetched {
+			sums, err = bm.fetchAptIndex(indexURL)
+			if err != nil {
+				return err
+			}
+			indexes[indexURL] = sums
+		}
+
+		sum, ok := sums[filename]
+		if !ok {
+			return fmt.Errorf("%s is not listed in the repository index %s, so it cannot be verified", path.Base(debURL), indexURL)
+		}
+		bm.rememberChecksum(debURL, sum)
+	}
+	return nil
+}
+
+// fetchAptIndex downloads and parses an apt Packages index. A repository
+// without one yields no checksums.
+func (bm *BinaryManager) fetchAptIndex(indexURL string) (map[string]string, error) {
+	resp, err := bm.client().Get(indexURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch package index %s: %w", indexURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch package index %s: HTTP %d", indexURL, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, aptIndexMaxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read package index %s: %w", indexURL, err)
+	}
+	return parseAptPackagesIndex(string(body)), nil
+}
+
+// exactVersionParts is how many dot-separated parts a full X.Y.Z version has.
+const exactVersionParts = 3
+
+// isExactVersion reports whether a version names one release (X.Y.Z, with an
+// optional build suffix) rather than a series (X.Y) to be resolved.
+func isExactVersion(version string) bool {
+	return len(strings.Split(version, ".")) >= exactVersionParts
 }
 
 // rememberChecksum records the checksum published for a download URL.
@@ -142,58 +277,85 @@ func (bm *BinaryManager) getMongoDBVersions() (*MongoDBFullJSON, error) {
 		return bm.versionJSON, nil
 	}
 
-	// Check for cached file
-	cacheFile := filepath.Join(bm.storageDir, "mongo-versions.json")
-	cacheMaxAge := 24 * time.Hour
-
-	// Try to load from cache if it exists and is fresh
-	if info, err := os.Stat(cacheFile); err == nil {
-		age := time.Since(info.ModTime())
-		if age < cacheMaxAge {
-			// Load from cache
-			data, err := os.ReadFile(cacheFile)
-			if err == nil {
-				var fullJSON MongoDBFullJSON
-				if err := json.Unmarshal(data, &fullJSON); err == nil {
-					bm.versionJSON = &fullJSON
-					return &fullJSON, nil
-				}
-			}
-		}
+	// LOCAL-043: use the index on disk while it is fresh
+	cacheFile := filepath.Join(bm.storageDir, versionIndexFile)
+	cached, cachedAt := loadVersionIndex(cacheFile)
+	if cached != nil && time.Since(cachedAt) < versionIndexMaxAge {
+		bm.versionJSON = cached
+		return cached, nil
 	}
 
-	// Need to fetch fresh data
-	resp, err := http.Get("https://downloads.mongodb.org/full.json")
+	fetched, data, err := bm.fetchVersionIndex()
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch MongoDB versions: %w", err)
+		// A stale index still lists every version that existed when it was
+		// saved; that beats failing because the network is slow or down.
+		if cached != nil {
+			fmt.Printf("  ⚠️  Could not refresh the MongoDB version index (%v); using the copy from %s\n",
+				err, cachedAt.Format(time.RFC3339))
+			bm.versionJSON = cached
+			return cached, nil
+		}
+		return nil, err
+	}
+
+	if err := os.MkdirAll(bm.storageDir, 0755); err != nil {
+		fmt.Printf("  ⚠️  Could not cache the MongoDB version index: %v\n", err)
+	} else if err := atomicWriteFile(cacheFile, data, 0644); err != nil {
+		fmt.Printf("  ⚠️  Could not cache the MongoDB version index: %v\n", err)
+	}
+
+	bm.versionJSON = fetched
+	return fetched, nil
+}
+
+const (
+	versionIndexFile   = "mongo-versions.json"
+	versionIndexURL    = "https://downloads.mongodb.org/full.json"
+	versionIndexMaxAge = 24 * time.Hour
+)
+
+// loadVersionIndex reads the version index cached on disk and when it was
+// saved. It returns nil if there is no usable cache.
+func loadVersionIndex(cacheFile string) (*MongoDBFullJSON, time.Time) {
+	info, err := os.Stat(cacheFile)
+	if err != nil {
+		return nil, time.Time{}
+	}
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		return nil, time.Time{}
+	}
+	var index MongoDBFullJSON
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, time.Time{}
+	}
+	return &index, info.ModTime()
+}
+
+// fetchVersionIndex downloads the MongoDB version index. The download is
+// large (tens of megabytes) and is bounded by the download client's timeout.
+// LOCAL-043
+func (bm *BinaryManager) fetchVersionIndex() (*MongoDBFullJSON, []byte, error) {
+	resp, err := bm.downloadClient().Get(versionIndexURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch MongoDB versions: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch MongoDB versions: HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("failed to fetch MongoDB versions: HTTP %d", resp.StatusCode)
 	}
 
-	// Read response
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read MongoDB versions: %w", err)
+		return nil, nil, fmt.Errorf("failed to read MongoDB versions: %w", err)
 	}
 
-	// Parse JSON
-	var fullJSON MongoDBFullJSON
-	if err := json.Unmarshal(data, &fullJSON); err != nil {
-		return nil, fmt.Errorf("failed to parse MongoDB versions: %w", err)
+	var index MongoDBFullJSON
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse MongoDB versions: %w", err)
 	}
-
-	// Cache to disk
-	if err := os.MkdirAll(bm.storageDir, 0755); err == nil {
-		_ = os.WriteFile(cacheFile, data, 0644)
-	}
-
-	// Cache in memory
-	bm.versionJSON = &fullJSON
-
-	return &fullJSON, nil
+	return &index, data, nil
 }
 
 // GetBinPathForPlatform gets the bin path for a specific platform
@@ -217,6 +379,23 @@ func (bm *BinaryManager) GetBinPathWithVariant(version string, variant Variant, 
 		return cached, nil
 	}
 	bm.mu.Unlock()
+
+	// LOCAL-043: an exact version that is already cached needs neither the
+	// version index nor a download.
+	if isExactVersion(version) {
+		cacheDir := filepath.Join(bm.cacheDir, fmt.Sprintf("%s-%s-%s", variant, version, platformKey))
+		if cacheIsComplete(cacheDir) {
+			binPath := filepath.Join(cacheDir, cacheBinDirName)
+			if err := bm.ensureShell(version, platform, binPath); err != nil {
+				return "", fmt.Errorf("failed to ensure a compatible MongoDB shell: %w", err)
+			}
+			fmt.Printf("  ✓ MongoDB %s for %s cached at %s\n", version, platformKey, binPath)
+			bm.mu.Lock()
+			bm.binPaths[cacheKey] = binPath
+			bm.mu.Unlock()
+			return binPath, nil
+		}
+	}
 
 	// Resolve version (X.Y -> latest X.Y.Z) - only for mongo variant
 	// Percona versions are used as-is since they have build numbers
@@ -321,6 +500,12 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 	case VariantPercona:
 		// Try tarball first
 		url, err = bm.buildPerconaURL(version, platform)
+		if err == nil {
+			// LOCAL-035
+			if err := bm.fetchPerconaChecksum(url); err != nil {
+				return "", err
+			}
+		}
 		if err != nil {
 			// Tarball not found, try .deb packages for Linux
 			fmt.Printf("  Tarball not available, trying .deb packages...\n")
@@ -754,10 +939,16 @@ func (bm *BinaryManager) buildPerconaDebURLs(version string, platform Platform) 
 	}
 
 	// Base URL pattern (note: uses psmdb-60, psmdb-44, psmdb-36, etc. without dots in version)
-	baseURL := fmt.Sprintf("http://repo.percona.com/psmdb-%s/apt/pool/main/p/%s", repoVersion, pkgDir)
+	baseURL := fmt.Sprintf("https://repo.percona.com/psmdb-%s/apt/pool/main/p/%s", repoVersion, pkgDir)
 
-	// Packages we need: server (mongod), mongos, and shell
-	components := []string{"server", "mongos", "shell"}
+	// Packages we need: server (mongod) and mongos. Only series before 5.0
+	// also need a shell package (the legacy mongo shell); for 5.0 and later
+	// mup installs its own pinned mongosh afterwards.
+	// LOCAL-041
+	components := []string{"server", "mongos"}
+	if usesLegacyShellPackage(version) {
+		components = append(components, "shell")
+	}
 
 	// Try each distro until we find one that works
 	for _, distro := range distros {
@@ -765,41 +956,30 @@ func (bm *BinaryManager) buildPerconaDebURLs(version string, platform Platform) 
 		allFound := true
 
 		for _, component := range components {
-			var packageName string
-			if component == "shell" {
-				// Shell package naming depends on version
-				if is36 {
-					// 3.6 uses standard shell package naming
-					packageName = fmt.Sprintf("%s-shell_%s.%s_amd64.deb", packagePrefix, version, distro)
-				} else {
-					// Determine if this version uses mongosh (>= 5.0) or mongo shell (< 5.0)
-					majorVer := versionParts[0]
-					useMongosh := majorVer >= "5"
-
-					if useMongosh {
-						packageName = fmt.Sprintf("percona-mongodb-mongosh_%s.%s_amd64.deb", version, distro)
-					} else {
-						packageName = fmt.Sprintf("%s-shell_%s.%s_amd64.deb", packagePrefix, version, distro)
-					}
-				}
-			} else {
-				packageName = fmt.Sprintf("%s-%s_%s.%s_amd64.deb", packagePrefix, component, version, distro)
-			}
+			packageName := fmt.Sprintf("%s-%s_%s.%s_amd64.deb", packagePrefix, component, version, distro)
 
 			url := fmt.Sprintf("%s/%s", baseURL, packageName)
 
 			// Verify URL exists
-			resp, err := http.Head(url)
-			if err != nil || resp.StatusCode != http.StatusOK {
+			resp, err := bm.client().Head(url)
+			if err != nil {
 				allFound = false
 				break
 			}
 			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				allFound = false
+				break
+			}
 
 			urls[component] = url
 		}
 
 		if allFound {
+			// LOCAL-038
+			if err := bm.fetchPerconaDebChecksums(urls, distro); err != nil {
+				return nil, err
+			}
 			return urls, nil
 		}
 	}
@@ -887,7 +1067,7 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 		fmt.Printf("  Downloading %s from %s...\n", component, url)
 
 		// Download .deb file
-		resp, err := http.Get(url)
+		resp, err := bm.downloadClient().Get(url)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", component, err)
 		}
@@ -909,6 +1089,16 @@ func (bm *BinaryManager) downloadAndExtractDebPackages(debURLs map[string]string
 		if err != nil {
 			return fmt.Errorf("failed to save .deb file: %w", err)
 		}
+
+		// LOCAL-038: every package is verified against the repository index
+		expected, ok := bm.publishedChecksum(url)
+		if !ok {
+			return fmt.Errorf("no published checksum for %s; refusing to install it unverified", path.Base(url))
+		}
+		if err := verifySHA256(debFile, expected); err != nil {
+			return err
+		}
+		fmt.Printf("  ✓ Checksum verified (SHA-256)\n")
 
 		// Extract .deb package (ar format)
 		// .deb contains: debian-binary, control.tar.*, data.tar.*
@@ -1351,6 +1541,11 @@ func (bm *BinaryManager) ensureMongosh(version string, platform Platform, binPat
 	// Download to temp file
 	if _, err := tmpFile.ReadFrom(resp.Body); err != nil {
 		return fmt.Errorf("failed to download to temp file: %w", err)
+	}
+
+	// LOCAL-034: mongosh versions are pinned, so their archives are too
+	if err := bm.verifyMongoshArchive(tmpFile.Name(), path.Base(mongoshURL)); err != nil {
+		return err
 	}
 
 	// Reset file pointer

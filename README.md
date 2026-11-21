@@ -269,10 +269,10 @@ mup plan list
 
 # Show plan details
 mup plan show my-cluster
-mup plan show plan-abc123
+mup plan show my-cluster --plan-id plan-abc123
 
 # Validate a saved plan
-mup plan validate plan.json
+mup plan validate my-cluster
 
 # Apply a saved plan
 mup plan apply my-cluster
@@ -317,7 +317,11 @@ If an interrupted run left a lock behind that mup cannot clear on its own:
 mup cluster unlock my-cluster
 ```
 
-> Implemented today: `mup cluster deploy --plan-only`, `mup cluster resume`, `mup cluster unlock`, `mup plan list`, `mup plan show`, and `mup lock list|show|cleanup|force-unlock`. The other `mup plan ...` subcommands (`validate`, `apply`) and the `mup state ...` commands shown above are not implemented yet.
+To undo an unfinished upgrade (before its post-upgrade tasks start):
+
+```bash
+mup cluster upgrade my-cluster --rollback
+```
 
 ### Future Operations (Coming Soon)
 

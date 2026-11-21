@@ -72,6 +72,7 @@ func NewManager(baseDir string, config *Config, exec executor.Executor, supMgr *
 	if err != nil {
 		return nil, fmt.Errorf("failed to create victoria metrics manager: %w", err)
 	}
+	vmManager.SetContainerName(ContainerName(VictoriaMetricsContainerName, config.ClusterName))
 
 	// Initialize Grafana manager
 	grafanaManager, err := NewGrafanaManager(
@@ -82,6 +83,7 @@ func NewManager(baseDir string, config *Config, exec executor.Executor, supMgr *
 	if err != nil {
 		return nil, fmt.Errorf("failed to create grafana manager: %w", err)
 	}
+	grafanaManager.SetContainerName(ContainerName(GrafanaContainerName, config.ClusterName))
 
 	// Initialize node_exporter manager
 	nodeExporterMgr, err := exporters.NewNodeExporterManager(
@@ -93,6 +95,7 @@ func NewManager(baseDir string, config *Config, exec executor.Executor, supMgr *
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node exporter manager: %w", err)
 	}
+	nodeExporterMgr.SetListenAddress(config.Exporters.ListenAddress)
 
 	// Initialize mongodb_exporter manager
 	mongoExporterMgr, err := exporters.NewMongoDBExporterManager(
@@ -105,6 +108,7 @@ func NewManager(baseDir string, config *Config, exec executor.Executor, supMgr *
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mongodb exporter manager: %w", err)
 	}
+	mongoExporterMgr.SetListenAddress(config.Exporters.ListenAddress)
 
 	return &Manager{
 		baseDir:            baseDir,

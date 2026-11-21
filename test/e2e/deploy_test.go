@@ -229,3 +229,52 @@ const planTestBasePort = 43000
 func isolatedStorageEnv(dir string) map[string]string {
 	return map[string]string{"MUP_STORAGE_DIR": filepath.Join(dir, "storage")}
 }
+
+// TestPlanValidateAndState covers the read-only plan and state commands:
+// a generated plan validates, an edited plan is refused, and a cluster with
+// no applies reports that plainly.
+func TestPlanValidateAndState(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	env := isolatedStorageEnv(tmpDir)
+	const clusterName = "test-plan-validate"
+
+	ports, err := testutil.FindAvailablePorts(planTestBasePort, 1)
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+	topologyFile := testutil.WriteFile(t, tmpDir, "topology.yaml", fmt.Sprintf(`mongod_servers:
+  - host: localhost
+    port: %d
+`, ports[0]))
+
+	deployResult := testutil.RunCommandWithEnv(t, env,
+		"cluster", "deploy", clusterName, topologyFile, "--version", "7.0.0", "--plan-only")
+	testutil.AssertSuccess(t, deployResult)
+
+	validateResult := testutil.RunCommandWithEnv(t, env, "plan", "validate", clusterName)
+	testutil.AssertSuccess(t, validateResult)
+	testutil.AssertContains(t, validateResult, "Plan is valid")
+
+	showResult := testutil.RunCommandWithEnv(t, env, "plan", "show", clusterName)
+	testutil.AssertSuccess(t, showResult)
+
+	// No apply has run yet.
+	stateResult := testutil.RunCommandWithEnv(t, env, "state", "show", clusterName)
+	testutil.AssertFailure(t, stateResult)
+
+	// An edited plan no longer matches its checksum and must be refused.
+	planFiles, err := filepath.Glob(filepath.Join(tmpDir, "storage", "clusters", clusterName, "plans", "*.json"))
+	if err != nil || len(planFiles) != 1 {
+		t.Fatalf("expected exactly one plan file, got %v (err: %v)", planFiles, err)
+	}
+	original := testutil.ReadFile(t, planFiles[0])
+	testutil.WriteFile(t, filepath.Dir(planFiles[0]), filepath.Base(planFiles[0]), original+"\n")
+
+	tamperedResult := testutil.RunCommandWithEnv(t, env, "plan", "validate", clusterName)
+	testutil.AssertFailure(t, tamperedResult)
+	testutil.AssertStderrContains(t, tamperedResult, "checksum")
+
+	applyResult := testutil.RunCommandWithEnv(t, env, "plan", "apply", clusterName, "--auto-approve")
+	testutil.AssertFailure(t, applyResult)
+	testutil.AssertStderrContains(t, applyResult, "checksum")
+}

@@ -15,6 +15,28 @@ type NodeExporterManager struct {
 	logsDir    string
 	version    string
 	executor   executor.Executor
+	// listenAddress is the address the exporter binds; empty means DefaultListenAddress.
+	listenAddress string
+}
+
+// DefaultListenAddress is the address exporters bind to. It is every
+// interface because the metrics scraper runs in a container and reaches the
+// host through the container network; a loopback-only exporter is not
+// reachable from there (confirmed with podman on macOS).
+// LOCAL-037
+const DefaultListenAddress = "0.0.0.0"
+
+// SetListenAddress overrides the address the exporter binds to.
+func (m *NodeExporterManager) SetListenAddress(address string) {
+	m.listenAddress = address
+}
+
+// exporterListenAddress returns the configured address or the default.
+func exporterListenAddress(configured string) string {
+	if configured == "" {
+		return DefaultListenAddress
+	}
+	return configured
 }
 
 // NodeExporterInstance represents a running node_exporter instance
@@ -99,11 +121,7 @@ func (m *NodeExporterManager) IsRunning(pid int) (bool, error) {
 
 // GenerateSupervisorConfig generates supervisord config for node_exporter
 func (m *NodeExporterManager) GenerateSupervisorConfig(programName, host string, port int, binaryPath, logFile string) string {
-	// For local deployments, listen on 0.0.0.0 so Victoria Metrics in Docker can reach via host.docker.internal
-	listenAddr := "0.0.0.0"
-	if host != "localhost" && host != "127.0.0.1" {
-		listenAddr = host
-	}
+	listenAddr := exporterListenAddress(m.listenAddress)
 
 	return fmt.Sprintf(`[program:%s]
 command = %s --web.listen-address=%s:%d

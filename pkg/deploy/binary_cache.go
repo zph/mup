@@ -12,6 +12,14 @@ import (
 )
 
 const (
+	// perconaChecksumSuffix is appended to a Percona tarball URL to get its checksum file.
+	perconaChecksumSuffix = ".sha256sum"
+	// perconaChecksumMaxBytes bounds how much of a checksum file is read.
+	perconaChecksumMaxBytes = 4096
+	sha256HexLength         = 64
+)
+
+const (
 	cacheBinDirName    = "bin"
 	cacheServerBinary  = "mongod"
 	cacheStagingSuffix = ".staging-"
@@ -103,4 +111,72 @@ func publishStagedCache(stagingDir, cacheDir string) error {
 		return fmt.Errorf("failed to publish cache %s: %w", cacheDir, err)
 	}
 	return nil
+}
+
+// parseSHA256SumFile reads the hash from sha256sum output: "<hex>  <filename>".
+// LOCAL-035
+func parseSHA256SumFile(content string) (string, error) {
+	fields := strings.Fields(content)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	sum := strings.ToLower(fields[0])
+	if len(sum) != sha256HexLength {
+		return "", fmt.Errorf("expected a %d-character SHA-256, got %d characters", sha256HexLength, len(sum))
+	}
+	if _, err := hex.DecodeString(sum); err != nil {
+		return "", fmt.Errorf("checksum is not hexadecimal: %w", err)
+	}
+	return sum, nil
+}
+
+const (
+	aptPoolMarker      = "/pool/"
+	aptIndexPathFormat = "dists/%s/main/binary-amd64/Packages"
+	// aptIndexMaxBytes bounds how much of a repository index is read.
+	aptIndexMaxBytes = 64 << 20
+	aptFieldFilename = "Filename:"
+	aptFieldSHA256   = "SHA256:"
+)
+
+// aptIndexLocation derives, from a package URL inside an apt repository, the
+// URL of that repository's Packages index for a distribution and the
+// package's Filename as the index lists it.
+// LOCAL-038
+func aptIndexLocation(debURL, distro string) (indexURL, filename string, err error) {
+	idx := strings.Index(debURL, aptPoolMarker)
+	if idx < 0 {
+		return "", "", fmt.Errorf("%s is not inside an apt repository pool", debURL)
+	}
+	repoRoot := debURL[:idx+1]
+	return repoRoot + fmt.Sprintf(aptIndexPathFormat, distro), debURL[idx+1:], nil
+}
+
+// parseAptPackagesIndex maps each package's Filename to its SHA256 from an
+// apt Packages index. Stanzas are separated by blank lines; stanzas missing
+// either field are skipped.
+// LOCAL-038
+func parseAptPackagesIndex(content string) map[string]string {
+	sums := make(map[string]string)
+	var filename, sum string
+	flush := func() {
+		if filename != "" && sum != "" {
+			sums[filename] = strings.ToLower(sum)
+		}
+		filename, sum = "", ""
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		switch {
+		case strings.TrimSpace(line) == "":
+			flush()
+		case strings.HasPrefix(line, aptFieldFilename):
+			filename = strings.TrimSpace(strings.TrimPrefix(line, aptFieldFilename))
+		case strings.HasPrefix(line, aptFieldSHA256):
+			sum = strings.TrimSpace(strings.TrimPrefix(line, aptFieldSHA256))
+		}
+	}
+	flush()
+	return sums
 }

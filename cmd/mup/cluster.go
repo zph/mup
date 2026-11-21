@@ -47,6 +47,7 @@ var (
 	clusterUpgradeParallelShards    bool
 	clusterUpgradePromptLevel       string
 	clusterUpgradeResume            bool
+	clusterUpgradeRollback          bool
 	clusterUpgradeTimeout           time.Duration
 	clusterUpgradeResumePromptLevel string
 	clusterUpgradeDryRun            bool
@@ -323,6 +324,7 @@ Examples:
 			fmt.Printf("\n❌ Deployment failed: %v\n", err)
 			fmt.Printf("\nState ID: %s\n", state.StateID)
 			fmt.Printf("Resume with: mup cluster resume %s\n", clusterName)
+			fmt.Printf("Or discard it with: mup cluster destroy %s\n", clusterName)
 			return err
 		}
 
@@ -423,37 +425,60 @@ operation that failed.`,
 			return fmt.Errorf("latest apply %s for cluster %s is %s and cannot be resumed", state.StateID, clusterName, state.Status)
 		}
 
-		resumePlan, err := plan.LoadFromFile(stateManager.GetPlanPath(state.PlanID))
+		// LOCAL-032: only resume a plan that still matches its checksum
+		planStore, err := plan.NewPlanStore(storageDir)
 		if err != nil {
-			return fmt.Errorf("failed to load plan %s: %w", state.PlanID, err)
+			return fmt.Errorf("failed to create plan store: %w", err)
 		}
-
-		lockMgr, err := apply.NewLockManager(storageDir)
+		resumePlan, err := planStore.LoadVerifiedPlan(clusterName, state.PlanID)
 		if err != nil {
-			return fmt.Errorf("failed to create lock manager: %w", err)
-		}
-		lock, err := lockMgr.AcquireLock(clusterName, state.PlanID, resumePlan.Operation, clusterLockTimeout)
-		if err != nil {
-			return fmt.Errorf("failed to acquire cluster lock: %w", err)
-		}
-		defer func() {
-			if err := lockMgr.ReleaseLock(clusterName, lock); err != nil {
-				fmt.Printf("Warning: failed to release lock: %v\n", err)
-			}
-		}()
-
-		applier := apply.NewDefaultApplier(operation.NewExecutor(localExecutorsForPlan(resumePlan)), stateManager)
-
-		fmt.Printf("Resuming apply %s for cluster '%s' from phase '%s'...\n\n", state.StateID, clusterName, state.CurrentPhase)
-		if _, err := applier.Resume(ctx, state); err != nil {
-			fmt.Printf("\n❌ Resume failed: %v\n", err)
-			fmt.Printf("Resume again with: mup cluster resume %s\n", clusterName)
 			return err
 		}
 
-		fmt.Printf("\n✅ Deployment completed successfully!\n")
-		return nil
+		return withClusterLock(ctx, clusterName, state.PlanID, resumePlan.Operation, func() error {
+			applier := apply.NewDefaultApplier(operation.NewExecutor(localExecutorsForPlan(resumePlan)), stateManager)
+
+			fmt.Printf("Resuming apply %s for cluster '%s' from phase '%s'...\n\n", state.StateID, clusterName, state.CurrentPhase)
+			if _, err := applier.Resume(ctx, state); err != nil {
+				fmt.Printf("\n❌ Resume failed: %v\n", err)
+				fmt.Printf("Resume again with: mup cluster resume %s\n", clusterName)
+				return err
+			}
+
+			fmt.Printf("\n✅ Deployment completed successfully!\n")
+			return nil
+		})
 	},
+}
+
+// withClusterLock runs fn while holding the cluster lock, renewing the lock
+// in the background and releasing it afterwards.
+func withClusterLock(ctx context.Context, clusterName, planID, operationName string, fn func() error) error {
+	lockMgr, err := newLockManager()
+	if err != nil {
+		return err
+	}
+
+	lock, err := lockMgr.AcquireLock(clusterName, planID, operationName, clusterLockTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to acquire cluster lock: %w", err)
+	}
+	defer func() {
+		if err := lockMgr.ReleaseLock(clusterName, lock); err != nil {
+			fmt.Printf("Warning: failed to release lock: %v\n", err)
+		}
+	}()
+
+	// Stop renewal and wait for it before the deferred release above runs, so
+	// a renewal in flight cannot rewrite a released lock.
+	renewCtx, renewCancel := context.WithCancel(ctx)
+	renewalStopped := lockMgr.StartLockRenewal(renewCtx, lock, clusterLockRenewInterval, clusterLockTimeout)
+	defer func() {
+		renewCancel()
+		<-renewalStopped
+	}()
+
+	return fn()
 }
 
 // defaultUpgradeTimeout bounds a whole rolling upgrade. It is much longer
@@ -728,6 +753,9 @@ Examples:
 
   # Resume interrupted upgrade
   mup cluster upgrade my-rs --resume
+
+  # Undo an unfinished upgrade (before post-upgrade tasks have started)
+  mup cluster upgrade my-rs --rollback
 `,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -769,10 +797,13 @@ Examples:
 
 		// Initialize or load state
 		var state *upgrade.UpgradeState
-		if clusterUpgradeResume {
+		if clusterUpgradeResume && clusterUpgradeRollback {
+			return fmt.Errorf("--resume and --rollback cannot be used together")
+		}
+		if clusterUpgradeResume || clusterUpgradeRollback {
 			state, err = stateManager.LoadState()
 			if err != nil {
-				return fmt.Errorf("no upgrade state found to resume: %w", err)
+				return fmt.Errorf("no unfinished upgrade found: %w", err)
 			}
 
 			// Override prompt level if specified
@@ -807,6 +838,19 @@ Examples:
 		upgrader, err := createLocalUpgrader(config)
 		if err != nil {
 			return fmt.Errorf("failed to create upgrader: %w", err)
+		}
+
+		// UPGSAFE-014
+		if clusterUpgradeRollback {
+			if promptLevel != upgrade.PromptLevelNone {
+				fmt.Printf("Roll cluster %s back to %s, undoing the unfinished upgrade? (yes/no): ", clusterName, clusterMeta.Version)
+				var response string
+				if _, err := fmt.Scanln(&response); err != nil || (response != "yes" && response != "y") {
+					fmt.Println("Cancelled.")
+					return nil
+				}
+			}
+			return upgrader.Rollback(ctx)
 		}
 
 		// Execute upgrade or resume
@@ -880,6 +924,7 @@ func init() {
 	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeParallelShards, "parallel-shards", false, "Upgrade shards in parallel (default: sequential)")
 	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradePromptLevel, "prompt-level", "phase", "Prompting granularity: none, phase, node, critical")
 	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeResume, "resume", false, "Resume a paused or failed upgrade")
+	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeRollback, "rollback", false, "Undo an unfinished upgrade by moving upgraded nodes back to the old version")
 	clusterUpgradeCmd.Flags().DurationVar(&clusterUpgradeTimeout, "timeout", defaultUpgradeTimeout, "Overall upgrade timeout, including time spent at prompts")
 	clusterUpgradeCmd.Flags().StringVar(&clusterUpgradeResumePromptLevel, "resume-with-prompt-level", "", "Override prompt level when resuming")
 	clusterUpgradeCmd.Flags().BoolVar(&clusterUpgradeDryRun, "dry-run", false, "Show upgrade plan without executing")

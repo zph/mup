@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -751,9 +753,13 @@ func TestBinaryManager_ensureMongosh_ReplacesUnversionedCachedShell(t *testing.T
 		t.Fatalf("failed to create stale mongosh: %v", err)
 	}
 
+	archiveSum := sha256.Sum256(archive)
 	bm := &BinaryManager{
 		httpClient:            client,
 		mongoshReleaseBaseURL: "https://mongosh.test",
+		mongoshChecksum: func(string) (string, bool) {
+			return hex.EncodeToString(archiveSum[:]), true
+		},
 	}
 	platform := Platform{OS: "darwin", Arch: "amd64"}
 	if err := bm.ensureMongosh("4.0.28", platform, binPath); err != nil {

@@ -21,6 +21,20 @@ type VictoriaMetricsManager struct {
 	port         int
 	retention    string
 	dockerClient *docker.Client
+	// containerName is the name the container runs under; empty means the legacy shared name.
+	containerName string
+}
+
+// SetContainerName sets the name the Victoria Metrics container runs under.
+func (vm *VictoriaMetricsManager) SetContainerName(name string) {
+	vm.containerName = name
+}
+
+func (vm *VictoriaMetricsManager) name() string {
+	if vm.containerName == "" {
+		return VictoriaMetricsContainerName
+	}
+	return vm.containerName
 }
 
 // NewVictoriaMetricsManager creates a new Victoria Metrics manager
@@ -76,7 +90,7 @@ stopsignal = TERM
 `,
 		VictoriaMetricsProgramName,
 		runtime,
-		VictoriaMetricsContainerName,
+		vm.name(),
 		vm.port,
 		vm.dataDir,
 		vm.configDir,
@@ -88,7 +102,7 @@ stopsignal = TERM
 
 // IsRunning checks if Victoria Metrics is running
 func (vm *VictoriaMetricsManager) IsRunning(ctx context.Context) (bool, error) {
-	return vm.dockerClient.ContainerRunning(ctx, VictoriaMetricsContainerName)
+	return vm.dockerClient.ContainerRunning(ctx, vm.name())
 }
 
 // Stop stops Victoria Metrics container
@@ -102,7 +116,7 @@ func (vm *VictoriaMetricsManager) Stop(ctx context.Context) error {
 		return nil // Already stopped
 	}
 
-	if err := vm.dockerClient.StopContainer(ctx, VictoriaMetricsContainerName); err != nil {
+	if err := vm.dockerClient.StopContainer(ctx, vm.name()); err != nil {
 		return fmt.Errorf("failed to stop victoria metrics: %w", err)
 	}
 
@@ -111,7 +125,7 @@ func (vm *VictoriaMetricsManager) Stop(ctx context.Context) error {
 
 // Cleanup removes Victoria Metrics container
 func (vm *VictoriaMetricsManager) Cleanup(ctx context.Context) error {
-	return vm.dockerClient.RemoveContainer(ctx, VictoriaMetricsContainerName)
+	return vm.dockerClient.RemoveContainer(ctx, vm.name())
 }
 
 // GetURL returns the Victoria Metrics URL

@@ -11,12 +11,20 @@ type Config struct {
 	VictoriaMetricsPort int    `yaml:"victoria_metrics_port"`
 	GrafanaPort         int    `yaml:"grafana_port"`
 
+	// ClusterName scopes container names so two clusters' monitoring stacks
+	// do not collide. LOCAL-036
+	ClusterName string `yaml:"cluster_name,omitempty"`
+
 	Exporters ExportersConfig `yaml:"exporters"`
 	Grafana   GrafanaConfig   `yaml:"grafana"`
 }
 
 // ExportersConfig configures metric exporters
 type ExportersConfig struct {
+	// ListenAddress is the address exporters bind to; empty uses
+	// exporters.DefaultListenAddress. LOCAL-037
+	ListenAddress string `yaml:"listen_address,omitempty"`
+
 	NodeExporter    NodeExporterConfig    `yaml:"node_exporter"`
 	MongoDBExporter MongoDBExporterConfig `yaml:"mongodb_exporter"`
 }

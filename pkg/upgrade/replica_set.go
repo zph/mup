@@ -19,6 +19,9 @@ type ReplicaSetMember struct {
 	StateNum  int32
 	Health    int32
 	IsPrimary bool
+	// OptimeDate is when the member's last applied operation was written; zero
+	// when the server reports none (arbiters).
+	OptimeDate time.Time
 }
 
 // GetReplicaSetStatus gets the current replica set status

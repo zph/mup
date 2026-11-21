@@ -33,6 +33,12 @@ func WaitForPort(t *testing.T, host string, port int, timeout time.Duration) err
 // mongosh. It is a ceiling on waiting for an event, not an expected duration.
 const MongoReadyTimeout = 2 * time.Minute
 
+// mongoQueryTimeout bounds one mongosh command run by a test. It is a
+// ceiling for a stuck command, not an expected duration: the first writes
+// through mongos to a newly sharded collection can take well over ten seconds
+// on a busy machine.
+const mongoQueryTimeout = 2 * time.Minute
+
 // mongoshAttemptTimeout bounds one mongosh invocation. The first launch of a
 // freshly copied mongosh binary can take several seconds on a busy machine.
 const mongoshAttemptTimeout = 20 * time.Second
@@ -67,7 +73,7 @@ func WaitForMongoReady(t *testing.T, mongoshPath, connectionString string, timeo
 func QueryMongo(t *testing.T, mongoshPath, connectionString, command string) (string, error) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoQueryTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, mongoshPath,

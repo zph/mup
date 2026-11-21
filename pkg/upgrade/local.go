@@ -18,6 +18,7 @@ import (
 
 	"github.com/zph/mup/pkg/deploy"
 	"github.com/zph/mup/pkg/meta"
+	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/topology"
 )
@@ -649,25 +650,8 @@ func (lu *LocalUpgrader) regenerateSupervisorConfig(_ context.Context) error {
 	// The config generation will create config dirs, but we need to ensure log dirs exist too
 	fmt.Printf("  Creating per-process directories...\n")
 
-	for _, node := range clusterMeta.Topology.Mongod {
-		logDir := filepath.Join(lu.newVersionDir, fmt.Sprintf("mongod-%d", node.Port), "log")
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			return fmt.Errorf("failed to create log dir for mongod-%d: %w", node.Port, err)
-		}
-	}
-
-	for _, node := range clusterMeta.Topology.ConfigSvr {
-		logDir := filepath.Join(lu.newVersionDir, fmt.Sprintf("mongod-%d", node.Port), "log")
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			return fmt.Errorf("failed to create log dir for config-server-%d: %w", node.Port, err)
-		}
-	}
-
-	for _, node := range clusterMeta.Topology.Mongos {
-		logDir := filepath.Join(lu.newVersionDir, fmt.Sprintf("mongos-%d", node.Port), "log")
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			return fmt.Errorf("failed to create log dir for mongos-%d: %w", node.Port, err)
-		}
+	if err := createProcessLogDirs(lu.newVersionDir, clusterMeta.Topology); err != nil {
+		return err
 	}
 
 	// Generate config for each mongod node
@@ -805,6 +789,7 @@ func (lu *LocalUpgrader) upgradeReplicaSet(ctx context.Context, nodes []topology
 		rsName:        rsName,
 		settleTimeout: defaultSettleTimeout,
 		pollInterval:  defaultSettlePoll,
+		maxLag:        defaultMaxReplicationLag,
 		isDone: func(hostPort string) bool {
 			nodeState, exists := lu.state.Nodes[hostPort]
 			return exists && nodeState.Status == NodeStatusCompleted
@@ -1328,13 +1313,7 @@ func (lu *LocalUpgrader) checkShardedClusterHealth(ctx context.Context, client *
 		return fmt.Errorf("no shards found in cluster")
 	}
 
-	// Check balancer state
-	var balancerResult bson.M
-	err = configDB.RunCommand(ctx, bson.D{{Key: "balancerStatus", Value: 1}}).Decode(&balancerResult)
-	if err != nil {
-		// Balancer status check is not critical, just warn
-		fmt.Printf("    Warning: Could not check balancer status: %v\n", err)
-	}
+	// The balancer is read and paused by balancerGuard before the first phase.
 
 	return nil
 }
@@ -1486,4 +1465,32 @@ func (lu *LocalUpgrader) checkReplicationLag(ctx context.Context, client *mongo.
 	}
 
 	return maxLag, nil
+}
+
+// createProcessLogDirs creates the log directory of every node under a
+// version directory, named after the program each node is supervised as.
+// UPGSAFE-012
+func createProcessLogDirs(versionDir string, topo *topology.Topology) error {
+	type processNode struct {
+		nodeType string
+		port     int
+	}
+	var nodes []processNode
+	for _, node := range topo.Mongod {
+		nodes = append(nodes, processNode{"mongod", node.Port})
+	}
+	for _, node := range topo.ConfigSvr {
+		nodes = append(nodes, processNode{"config", node.Port})
+	}
+	for _, node := range topo.Mongos {
+		nodes = append(nodes, processNode{"mongos", node.Port})
+	}
+
+	for _, node := range nodes {
+		processDir := naming.GetProcessDir(node.nodeType, node.port)
+		if err := os.MkdirAll(filepath.Join(versionDir, processDir, "log"), 0755); err != nil {
+			return fmt.Errorf("failed to create log dir for %s: %w", processDir, err)
+		}
+	}
+	return nil
 }

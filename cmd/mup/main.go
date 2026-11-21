@@ -16,6 +16,8 @@ clusters (standalone, replica sets, and sharded clusters).`,
 }
 
 func main() {
+	// main prints the error once; cobra would otherwise print it as well.
+	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

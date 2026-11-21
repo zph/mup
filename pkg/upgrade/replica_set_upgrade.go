@@ -134,6 +134,9 @@ type replicaSetUpgrade struct {
 	rsName        string
 	settleTimeout time.Duration
 	pollInterval  time.Duration
+	// maxLag is how far behind the primary a secondary may be; zero disables
+	// the replication lag gate.
+	maxLag time.Duration
 
 	// isDone reports whether a node (host:port) needs no further work.
 	isDone func(hostPort string) bool
@@ -199,6 +202,10 @@ func (r *replicaSetUpgrade) waitUntilSettled(ctx context.Context, hosts []string
 		members, err := r.probe.Status(ctx, r.rsName, hosts)
 		if err == nil {
 			err = evaluateReplicaSetHealth(members)
+		}
+		// UPGSAFE-013
+		if err == nil && r.maxLag > 0 {
+			err = checkReplicationLag(members, r.maxLag)
 		}
 		if err == nil {
 			return members, nil

@@ -25,6 +25,20 @@ type GrafanaManager struct {
 	adminUser       string
 	passwordFile    string
 	dockerClient    *docker.Client
+	// containerName is the name the container runs under; empty means the legacy shared name.
+	containerName string
+}
+
+// SetContainerName sets the name the Grafana container runs under.
+func (gm *GrafanaManager) SetContainerName(name string) {
+	gm.containerName = name
+}
+
+func (gm *GrafanaManager) name() string {
+	if gm.containerName == "" {
+		return GrafanaContainerName
+	}
+	return gm.containerName
 }
 
 // NewGrafanaManager creates a new Grafana manager
@@ -125,7 +139,7 @@ stopsignal = TERM
 `,
 		GrafanaProgramName,
 		runtime,
-		GrafanaContainerName,
+		gm.name(),
 		gm.port,
 		gm.dataDir,
 		gm.provisioningDir,
@@ -138,7 +152,7 @@ stopsignal = TERM
 
 // IsRunning checks if Grafana is running
 func (gm *GrafanaManager) IsRunning(ctx context.Context) (bool, error) {
-	return gm.dockerClient.ContainerRunning(ctx, GrafanaContainerName)
+	return gm.dockerClient.ContainerRunning(ctx, gm.name())
 }
 
 // Stop stops Grafana container
@@ -152,7 +166,7 @@ func (gm *GrafanaManager) Stop(ctx context.Context) error {
 		return nil // Already stopped
 	}
 
-	if err := gm.dockerClient.StopContainer(ctx, GrafanaContainerName); err != nil {
+	if err := gm.dockerClient.StopContainer(ctx, gm.name()); err != nil {
 		return fmt.Errorf("failed to stop grafana: %w", err)
 	}
 
@@ -161,7 +175,7 @@ func (gm *GrafanaManager) Stop(ctx context.Context) error {
 
 // Cleanup removes Grafana container
 func (gm *GrafanaManager) Cleanup(ctx context.Context) error {
-	return gm.dockerClient.RemoveContainer(ctx, GrafanaContainerName)
+	return gm.dockerClient.RemoveContainer(ctx, gm.name())
 }
 
 // GetURL returns the Grafana URL

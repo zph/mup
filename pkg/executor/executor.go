@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"io"
 	"os"
 )
@@ -47,4 +48,12 @@ type OSInfo struct {
 	OS      string // "linux", "darwin", etc.
 	Arch    string // "amd64", "arm64", etc.
 	Version string // OS version string
+}
+
+// ContextExecutor is implemented by executors that can stop a running command
+// when a context ends. Callers that need a bound on a command type-assert for
+// it and fall back to Execute.
+// LOCAL-042
+type ContextExecutor interface {
+	ExecuteContext(ctx context.Context, command string) (output string, err error)
 }

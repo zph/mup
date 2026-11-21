@@ -66,3 +66,45 @@ cover destroy safety, deploy input validation, and simulation purity.
 
 - **LOCAL-027**: The system SHALL install Grafana dashboards from copies embedded in the binary, independent of the working directory.
 - **LOCAL-028**: WHEN checking monitoring health, the system SHALL use the ports recorded in the cluster's monitoring URLs, falling back to the defaults only when a URL has no port.
+
+## Process naming
+
+- **LOCAL-029**: The system SHALL create each node's wrapper scripts under the directory of the program it is supervised as; config servers SHALL use `config-<port>`.
+
+## Operation phases
+
+- **LOCAL-030**: WHEN executing an operation, the system SHALL first ask its handler whether the operation is already complete and, IF it is, SHALL skip the operation and its pre-conditions; otherwise the system SHALL run the operation and then its post-execution verification, and IF verification fails THEN the system SHALL fail the operation. WHILE simulating, the system SHALL run every operation without consulting real state.
+- **LOCAL-031**: The system SHALL treat a start-process operation as complete WHEN the cluster's supervisor reports the program RUNNING, and a start-supervisor operation as complete WHEN the supervisor answers on its control port.
+
+## Plan integrity
+
+- **LOCAL-032**: WHEN loading a saved plan to apply or resume it, the system SHALL verify the plan against the checksum recorded when it was saved, and IF they differ or no checksum exists THEN the system SHALL refuse the plan.
+- **LOCAL-033**: `mup plan validate` SHALL report a plan as invalid IF it is malformed (no phases, no operations, an untyped operation or a duplicate operation ID), uses an operation type this build does not support, or its recorded validation did not pass.
+
+## Download checksums
+
+- **LOCAL-034**: WHEN installing mongosh, the system SHALL verify the downloaded archive against a checksum pinned for that release and platform, and IF none is pinned THEN the system SHALL refuse to install it.
+- **LOCAL-035**: WHEN downloading a Percona tarball, the system SHALL fetch the `.sha256sum` file published beside it and verify the tarball against it; IF no such file exists THEN the system SHALL warn and continue.
+
+## Monitoring isolation
+
+- **LOCAL-036**: The system SHALL name monitoring containers per cluster (`mup-<cluster>-<component>`).
+- **LOCAL-037**: The address metric exporters bind to SHALL be configurable, defaulting to all interfaces so the containerised scraper can reach them.
+
+## Package repositories
+
+- **LOCAL-038**: WHEN downloading Percona `.deb` packages, the system SHALL fetch them over HTTPS and SHALL verify each against the SHA-256 in the repository's `Packages` index; IF the index does not list a package or the checksum does not match, THEN the system SHALL refuse to install it.
+
+## Replica set initiation
+
+- **LOCAL-039**: WHEN initiating a replica set, the system SHALL first wait until every proposed member accepts connections and answers a command, and IF a member does not within the time limit THEN the system SHALL fail and name it.
+
+## Partial deployments and package fallback
+
+- **LOCAL-040**: WHEN `mup cluster destroy` is run on a cluster directory that has no metadata (a deployment that did not finish), the system SHALL shut down every supervisor running from that directory and then remove it; IF a supervisor cannot be stopped THEN the system SHALL NOT remove any files.
+- **LOCAL-041**: WHEN falling back to Percona `.deb` packages, the system SHALL require the server and mongos packages, and SHALL require a shell package only for series before 5.0.
+
+## Bounded commands
+
+- **LOCAL-042**: The system SHALL bound every supervisor control command with a timeout and stop a command that exceeds it; IF a start command errors or times out but the supervisor reports the program RUNNING, THEN the system SHALL treat the start as successful.
+- **LOCAL-043**: WHEN an exact MongoDB version is requested and its package is already cached, the system SHALL NOT contact the network; the version index fetch SHALL be bounded by a timeout, and IF it fails while an older copy is cached THEN the system SHALL use that copy.

@@ -604,19 +604,8 @@ func NewGenerateConfigHandler() (*GenerateConfigHandler, error) {
 
 // REQ-PES-036: Check if config already exists
 func (h *GenerateConfigHandler) IsComplete(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (bool, error) {
-	configPath, ok := op.Params["config_path"].(string)
-	if !ok {
-		return false, fmt.Errorf("config_path parameter not found")
-	}
-
-	// Check if config file exists
-	exists, err := exec.FileExists(configPath)
-	if err != nil {
-		return false, fmt.Errorf("check config exists: %w", err)
-	}
-
-	// TODO: Could add content hash verification here
-	return exists, nil
+	// An existing file may hold stale content; regenerating is cheap and idempotent.
+	return false, nil
 }
 
 // REQ-PES-047: Pre-execution validation
@@ -898,9 +887,15 @@ type StartProcessHandler struct{}
 
 // REQ-PES-036: Check if process is already running
 func (h *StartProcessHandler) IsComplete(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (bool, error) {
-	// TODO: Check process status via supervisorctl
-	// For now, always re-execute (supervisorctl start is idempotent)
-	return false, nil
+	// LOCAL-031: a process the cluster's supervisor already reports RUNNING
+	// needs no start, and its port being busy is expected.
+	programName, _ := op.Params["program_name"].(string)
+	supervisorConfig, _ := op.Params["supervisor_config"].(string)
+	port, ok := numberOption(op.Params["supervisor_port"])
+	if programName == "" || supervisorConfig == "" || !ok {
+		return false, nil
+	}
+	return supervisorProgramRunning(ctx, exec, supervisorConfig, int(port), programName), nil
 }
 
 // REQ-PES-047: Pre-execution validation
@@ -954,23 +949,14 @@ func (h *StartProcessHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 		}
 	}
 
-	// Get supervisor binary path
-	binaryPath, err := supervisordBinaryPath(exec)
-	if err != nil {
-		return nil, err
-	}
-
-	// Construct supervisorctl command
-	// supervisord ctl -c <config> -s http://localhost:<port> start <program-name>
-	serverURL := fmt.Sprintf("http://localhost:%d", supervisorPort)
-	command := fmt.Sprintf("%s ctl -c %s -s %s start %s", binaryPath, supervisorConfig, serverURL, programName)
-
 	fmt.Printf("  Starting %s via supervisorctl...\n", programName)
 
-	// Execute the supervisorctl command
-	output, err := exec.Execute(command)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start process %s: %w", programName, err)
+	// LOCAL-042: a stuck start call is stopped rather than blocking the deploy
+	output, startErr := supervisorctl(ctx, exec, supervisorConfig, supervisorPort, "start "+programName, supervisorStartTimeout)
+	if err := startOutcome(programName, startErr, func() bool {
+		return supervisorProgramRunning(ctx, exec, supervisorConfig, supervisorPort, programName)
+	}); err != nil {
+		return nil, err
 	}
 
 	fmt.Printf("  ✓ Started %s\n", programName)
@@ -1185,6 +1171,17 @@ func (h *InitReplicaSetHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	memberDocs, err := replicaSetMemberDocs(members, op.Params[paramMemberOptions])
 	if err != nil {
 		return nil, err
+	}
+
+	// LOCAL-039: every member must answer before the set can be initiated
+	if !isSimulated(exec) {
+		memberHosts := make([]string, 0, len(memberDocs))
+		for _, doc := range memberDocs {
+			memberHosts = append(memberHosts, doc["host"].(string))
+		}
+		if err := waitForMembersReachable(ctx, memberHosts, pingMember(exec), memberReadyTimeout, memberReadyPoll); err != nil {
+			return nil, err
+		}
 	}
 
 	// Use MongoDB client abstraction (handles both simulation and real execution)
@@ -1895,18 +1892,8 @@ type GenerateSupervisorConfigHandler struct{}
 
 // REQ-PES-036: Check if supervisor config already exists
 func (h *GenerateSupervisorConfigHandler) IsComplete(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (bool, error) {
-	clusterDir, ok := op.Params["cluster_dir"].(string)
-	if !ok {
-		return false, fmt.Errorf("cluster_dir parameter not found")
-	}
-
-	configPath := filepath.Join(clusterDir, "supervisor.ini")
-	exists, err := exec.FileExists(configPath)
-	if err != nil {
-		return false, fmt.Errorf("check supervisor config exists: %w", err)
-	}
-
-	return exists, nil
+	// An existing file may hold stale content; regenerating is cheap and idempotent.
+	return false, nil
 }
 
 // REQ-PES-047: Pre-execution validation
@@ -2026,10 +2013,13 @@ type StartSupervisorHandler struct{}
 
 // REQ-PES-036: Check if supervisord is already running
 func (h *StartSupervisorHandler) IsComplete(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (bool, error) {
-	// TODO: Implement health check by pinging supervisord HTTP endpoint
-	// For now, we always re-execute to ensure supervisord is running
-	// This is idempotent because supervisord won't start if already running
-	return false, nil
+	// LOCAL-031: a supervisor that answers on its control port is already up
+	clusterDir, _ := op.Params["cluster_dir"].(string)
+	if clusterDir == "" {
+		return false, nil
+	}
+	configPath := filepath.Join(clusterDir, "supervisor.ini")
+	return supervisorResponding(ctx, exec, configPath, supervisor.GetSupervisorHTTPPortForDir(clusterDir)), nil
 }
 
 // REQ-PES-047: Pre-execution validation

@@ -31,3 +31,13 @@ Safety gates for `mup cluster upgrade` on local clusters. These complement
 ## Failure handling
 
 - **UPGSAFE-011**: WHEN an upgrade fails at any phase, the system SHALL run the `on-upgrade-failure` hook on a context that is not cancelled with the upgrade; a paused upgrade SHALL NOT be treated as a failure.
+- **UPGSAFE-012**: WHEN preparing a new version directory, the system SHALL create each node's log directory under the name it is supervised as; config servers SHALL use `config-<port>`.
+
+## Replication lag
+
+- **UPGSAFE-013**: WHILE upgrading a replica set, the system SHALL NOT take a node down while any data-bearing secondary is more than the lag limit (default 30 seconds) behind the primary.
+
+## Rollback
+
+- **UPGSAFE-014**: WHEN `mup cluster upgrade --rollback` is run on an unfinished upgrade, the system SHALL move every node the upgrade touched back to the old binaries (mongos, then shards, then config servers; unhealthy members first, the primary last after a stepdown), SHALL verify each reports the old version, SHALL restore the balancer if the upgrade stopped it, and SHALL archive the upgrade state. IF post-upgrade tasks have started, THEN the system SHALL refuse to roll back.
+

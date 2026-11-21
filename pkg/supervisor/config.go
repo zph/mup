@@ -604,9 +604,10 @@ func (g *ConfigGenerator) GenerateWrapperScripts() error {
 	}
 
 	// Generate per-node scripts for config servers
+	// LOCAL-029: config servers are supervised as config-<port>
 	for _, node := range g.topology.ConfigSvr {
-		programName := fmt.Sprintf("mongod-%d", node.Port)
-		processDir := filepath.Join(g.clusterDir, programName)
+		programName := naming.GetProgramName("config", node.Port)
+		processDir := filepath.Join(g.clusterDir, naming.GetProcessDir("config", node.Port))
 		binDir := filepath.Join(processDir, "bin")
 
 		if err := os.MkdirAll(binDir, 0755); err != nil {

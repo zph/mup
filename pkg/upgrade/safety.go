@@ -3,8 +3,10 @@ package upgrade
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // memberState is a MongoDB replica set member state as reported by
@@ -89,12 +91,13 @@ func parseReplicaSetMembers(status bson.M) ([]ReplicaSetMember, error) {
 		}
 
 		members = append(members, ReplicaSetMember{
-			Host:      host,
-			Port:      port,
-			StateStr:  stateStr,
-			StateNum:  state,
-			Health:    int32Field(doc["health"]),
-			IsPrimary: memberState(state) == memberStatePrimary,
+			Host:       host,
+			Port:       port,
+			StateStr:   stateStr,
+			StateNum:   state,
+			Health:     int32Field(doc["health"]),
+			IsPrimary:  memberState(state) == memberStatePrimary,
+			OptimeDate: timeField(doc["optimeDate"]),
 		})
 	}
 	return members, nil
@@ -112,6 +115,61 @@ func int32Field(raw interface{}) int32 {
 		return int32(v)
 	}
 	return 0
+}
+
+// timeField reads a BSON date field; it is zero when absent.
+func timeField(raw interface{}) time.Time {
+	switch v := raw.(type) {
+	case primitive.DateTime:
+		return v.Time()
+	case time.Time:
+		return v
+	}
+	return time.Time{}
+}
+
+// defaultMaxReplicationLag is how far behind the primary a secondary may be
+// before the upgrade takes another node down. An idle primary writes a no-op
+// roughly every ten seconds, so a healthy secondary can appear that far behind.
+const defaultMaxReplicationLag = 30 * time.Second
+
+// checkReplicationLag fails when any data-bearing secondary is more than
+// maxLag behind the primary. Taking a node down while another is still
+// catching up leaves fewer members able to acknowledge majority writes.
+// UPGSAFE-013
+func checkReplicationLag(members []ReplicaSetMember, maxLag time.Duration) error {
+	var primary *ReplicaSetMember
+	var secondaries []ReplicaSetMember
+	for i := range members {
+		switch memberState(members[i].StateNum) {
+		case memberStatePrimary:
+			primary = &members[i]
+		case memberStateSecondary:
+			secondaries = append(secondaries, members[i])
+		}
+	}
+
+	if len(secondaries) == 0 {
+		return nil
+	}
+	if primary == nil || primary.OptimeDate.IsZero() {
+		return fmt.Errorf("cannot measure replication lag: no primary optime")
+	}
+
+	var lagging []string
+	for _, m := range secondaries {
+		if m.OptimeDate.IsZero() {
+			lagging = append(lagging, fmt.Sprintf("%s (no optime reported)", m.Address()))
+			continue
+		}
+		if lag := primary.OptimeDate.Sub(m.OptimeDate); lag > maxLag {
+			lagging = append(lagging, fmt.Sprintf("%s (%s behind)", m.Address(), lag.Round(time.Second)))
+		}
+	}
+	if len(lagging) > 0 {
+		return fmt.Errorf("replication lag exceeds %s: %s", maxLag, strings.Join(lagging, ", "))
+	}
+	return nil
 }
 
 // evaluateReplicaSetHealth checks that a replica set has a primary and that

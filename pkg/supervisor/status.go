@@ -100,3 +100,14 @@ func parseStatusLine(line string) (*ProcessStatus, error) {
 
 	return status, nil
 }
+
+// ParseStatusState returns the process state in one line of
+// `supervisord ctl status` output, or StateUnknown if the line is not a
+// status line.
+func ParseStatusState(line string) ProcessState {
+	status, err := parseStatusLine(line)
+	if err != nil {
+		return StateUnknown
+	}
+	return status.ProcessState()
+}

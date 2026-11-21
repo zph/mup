@@ -1,7 +1,9 @@
 package operation
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/zph/mup/pkg/paths"
 
@@ -82,4 +84,74 @@ func ensureSupervisorPortFree(exec executor.Executor, port int, clusterName stri
 		return fmt.Errorf("supervisor control port %d for cluster %s is already in use (another cluster's supervisor or an unrelated process holds it)", port, clusterName)
 	}
 	return nil
+}
+
+const (
+	// supervisorStatusTimeout bounds a supervisor status query.
+	supervisorStatusTimeout = 30 * time.Second
+	// supervisorStartTimeout bounds one supervisor start call. A start
+	// normally returns within the program's startsecs; a call that takes
+	// minutes is stuck.
+	supervisorStartTimeout = 2 * time.Minute
+)
+
+// executeBounded runs a command that is stopped if it outlives timeout.
+// Executors that cannot stop a command run it unbounded.
+// LOCAL-042
+func executeBounded(ctx context.Context, exec executor.Executor, command string, timeout time.Duration) (string, error) {
+	bounded, ok := exec.(executor.ContextExecutor)
+	if !ok {
+		return exec.Execute(command)
+	}
+	boundedCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return bounded.ExecuteContext(boundedCtx, command)
+}
+
+// supervisorctl runs a supervisord control command against a cluster's
+// supervisor and returns its output.
+func supervisorctl(ctx context.Context, exec executor.Executor, configPath string, port int, args string, timeout time.Duration) (string, error) {
+	binaryPath, err := supervisordBinaryPath(exec)
+	if err != nil {
+		return "", err
+	}
+	command := fmt.Sprintf("%s ctl -c %s -s http://localhost:%d %s", binaryPath, configPath, port, args)
+	return executeBounded(ctx, exec, command, timeout)
+}
+
+// supervisorResponding reports whether the supervisor answers on its control port.
+// LOCAL-031
+func supervisorResponding(ctx context.Context, exec executor.Executor, configPath string, port int) bool {
+	_, err := supervisorctl(ctx, exec, configPath, port, "status", supervisorStatusTimeout)
+	return err == nil
+}
+
+// supervisorProgramRunning reports whether the supervisor has a program in the RUNNING state.
+// LOCAL-031
+func supervisorProgramRunning(ctx context.Context, exec executor.Executor, configPath string, port int, programName string) bool {
+	output, err := supervisorctl(ctx, exec, configPath, port, "status "+programName, supervisorStatusTimeout)
+	if err != nil {
+		return false
+	}
+	return supervisorReportsRunning(output)
+}
+
+// startOutcome decides the result of a supervisor start call. A call that
+// errored or timed out still counts as started if the supervisor reports the
+// program RUNNING, since that is what the operation is for.
+// LOCAL-042
+func startOutcome(programName string, startErr error, running func() bool) error {
+	if startErr == nil {
+		return nil
+	}
+	if running() {
+		fmt.Printf("  ⚠️  Start call for %s did not return cleanly (%v), but the process is RUNNING\n", programName, startErr)
+		return nil
+	}
+	return fmt.Errorf("failed to start process %s: %w", programName, startErr)
+}
+
+// supervisorReportsRunning interprets one line of supervisor status output.
+func supervisorReportsRunning(statusOutput string) bool {
+	return supervisor.ParseStatusState(statusOutput).IsRunning()
 }

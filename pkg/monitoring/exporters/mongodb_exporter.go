@@ -17,6 +17,13 @@ type MongoDBExporterManager struct {
 	version    string
 	executor   executor.Executor
 	extraArgs  []string
+	// listenAddress is the address the exporter binds; empty means DefaultListenAddress.
+	listenAddress string
+}
+
+// SetListenAddress overrides the address the exporter binds to.
+func (m *MongoDBExporterManager) SetListenAddress(address string) {
+	m.listenAddress = address
 }
 
 // MongoDBExporterInstance represents a running mongodb_exporter instance
@@ -114,11 +121,7 @@ func (m *MongoDBExporterManager) IsRunning(pid int) (bool, error) {
 
 // GenerateSupervisorConfig generates supervisord config for mongodb_exporter
 func (m *MongoDBExporterManager) GenerateSupervisorConfig(programName, host string, exporterPort, mongoDBPort int, binaryPath, logFile string) string {
-	// For local deployments, listen on 0.0.0.0 so Victoria Metrics in Docker can reach via host.docker.internal
-	listenAddr := "0.0.0.0"
-	if host != "localhost" && host != "127.0.0.1" {
-		listenAddr = host
-	}
+	listenAddr := exporterListenAddress(m.listenAddress)
 
 	args := []string{
 		fmt.Sprintf("--mongodb.uri=mongodb://%s:%d", host, mongoDBPort),

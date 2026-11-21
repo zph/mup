@@ -430,13 +430,29 @@ Spec: `docs/specs/local-only-safety-requirements.md` (LOCAL-001 to LOCAL-008).
 - ✅ **CLI** - `mup plan list|show` (`cmd/mup/plan.go`) and `mup lock list|show|cleanup|release|force-unlock` (`cmd/mup/lock.go`).
 - ✅ **E2E isolation** - e2e tests set `MUP_STORAGE_DIR`, link the developer's binary caches in, use free ports, and clean up the cluster they deployed.
 - ✅ Removed dead code: `pkg/playground`, root `test_supervisor_config.go`, the `ssh_port` topology field.
-- ⏳ Not addressed: a `start_process` operation that failed after its process came up still trips the `port_available` pre-condition on resume; the `IsComplete`/`PostHook` handler phases are still never called by the executor.
 - ⏳ Known gap: `cluster deploy --simulate` still resolves (and may download) MongoDB binaries before planning.
 - ❌ SSH executor, remote-mode CLI flags, `ssh_port` and `RemotePathResolver` removed.
 
+## Follow-up work (2026-11-20)
+
+- ✅ **Handler phases** (`pkg/operation/executor.go`) - LOCAL-030, LOCAL-031. `IsComplete` and `PostHook` are now called. Config generators always regenerate; `start_process` and `start_supervisor` check the supervisor, so a resume no longer trips `port_available` on its own processes.
+- ✅ **Plan integrity** (`pkg/plan/integrity.go`) - LOCAL-032, LOCAL-033. `mup cluster resume` and `mup plan apply` load plans through `LoadVerifiedPlan`.
+- ✅ **CLI** - `mup plan validate|apply` (`cmd/mup/plan.go`), `mup state show|logs|checkpoints` (`cmd/mup/state.go`), `mup cluster upgrade --rollback`.
+- ✅ **Rollback** (`pkg/upgrade/rollback.go`) - UPGSAFE-014.
+- ✅ **Replication lag gate** (`pkg/upgrade/safety.go` `checkReplicationLag`) - UPGSAFE-013.
+- ✅ **Config server directories** (`pkg/upgrade/local.go` `createProcessLogDirs`, `pkg/supervisor/config.go`) - UPGSAFE-012, LOCAL-029. Found by a live sharded upgrade: the new version's config servers went FATAL because their log directory was created as `mongod-<port>`.
+- ✅ **Download checksums** (`pkg/mongo/shell_checksums.go`, `pkg/deploy/binary_manager.go`) - LOCAL-034, LOCAL-035, LOCAL-038. Percona `.deb` packages are fetched over HTTPS and must match the SHA-256 in the apt `Packages` index; an unlisted package is refused. (Every package in the pool is listed: 217 of 217 checked across the 3.6 to 8.0 series.)
+- ✅ **Member readiness** (`pkg/operation/member_readiness.go`) - LOCAL-039. Replica set initiation waits for every member to answer instead of relying on a fixed sleep; found as an intermittent e2e failure under load.
+- ✅ **Monitoring** (`pkg/monitoring/container_names.go`, `pkg/monitoring/exporters`) - LOCAL-036, LOCAL-037.
+- ✅ **Bounded supervisor calls** (`pkg/executor/local.go` `ExecuteContext`, `pkg/operation/simulation.go`) - LOCAL-042. Added after one e2e run stalled during a `supervisorctl start` call; that stall was not reproduced in three further deploys of the same 11-process topology.
+- ✅ **Version index** (`pkg/deploy/binary_manager.go` `getMongoDBVersions`) - LOCAL-043. A cached exact version no longer triggers the 51 MB `full.json` download; the fetch has a timeout and falls back to a stale copy. This was the cause of intermittent multi-minute stalls: every run against fresh storage fetched the index with no timeout.
+- ✅ **Partial deployments** (`pkg/cluster/destroy.go`) - LOCAL-040. `cluster destroy` works on a cluster whose deploy failed before metadata was saved, stopping its supervisors first.
+- ✅ **E2E coverage** (`test/e2e/plan_apply_rollback_test.go`) - `TestPlanApply` and `TestUpgradeRollback` run against real clusters.
+- ✅ **Percona `.deb` fallback** (`pkg/deploy/binary_manager.go` `usesLegacyShellPackage`) - LOCAL-041. It no longer demands a mongosh package that does not exist in the server package directory for 5.0+. This path is Linux-only and is covered by unit tests against a fake repository, not by a real install.
+
 ## Upgrade Safety (2026-11-20)
 
-Spec: `docs/specs/upgrade-safety-requirements.md` (UPGSAFE-001 to UPGSAFE-011).
+Spec: `docs/specs/upgrade-safety-requirements.md` (UPGSAFE-001 to UPGSAFE-014).
 
 - ✅ **Replica set upgrade loop** (`pkg/upgrade/replica_set_upgrade.go`) - UPGSAFE-005, UPGSAFE-006. `replicaSetUpgrade.execute` waits for the set to settle and re-reads roles before every node. Live state is reached through the `replicaSetProbe` interface so ordering is unit-tested with a fake.
 - ✅ **Health evaluation** (`pkg/upgrade/safety.go`) - UPGSAFE-001. Arbiters count as healthy; shared by preflight and the upgrade loop.
@@ -448,7 +464,7 @@ Spec: `docs/specs/upgrade-safety-requirements.md` (UPGSAFE-001 to UPGSAFE-011).
 - ✅ **Failure hook** (`pkg/upgrade/upgrade.go` `handleUpgradeFailure`) - UPGSAFE-011. Fires for any failed phase, not only pre-flight.
 - ✅ **Config server program names** - config servers are upgraded as `config-<port>`, matching their supervisor program (was `mongod-<port>`, which failed at the first stop).
 - ✅ `mup cluster upgrade --timeout` (default 12h) replaces the reused 30m deploy timeout.
-- ⏳ Not addressed: no rollback of a partially upgraded cluster; the `next` symlink is still removed when an upgrade stops; replication lag is not checked between nodes (member state is); upgrade orchestration has no test against a live cluster.
+- ⏳ Not addressed: the `next` symlink is still removed when an upgrade stops (a resume recreates it); upgrade orchestration has no automated test against a live cluster.
 
 ## Import Command (removed)
 

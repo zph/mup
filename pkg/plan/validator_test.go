@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,26 +46,38 @@ func TestValidationRunner_Sequential(t *testing.T) {
 }
 
 func TestValidationRunner_Parallel(t *testing.T) {
+	const (
+		checkCount   = 5
+		hangDeadline = 30 * time.Second
+	)
 	runner := NewValidationRunner(true) // parallel
 
-	callCount := 0
-	for i := 0; i < 5; i++ {
+	// Every check blocks until all of them have started. A runner that ran
+	// them one at a time would never release the first, so finishing at all
+	// proves they ran concurrently - without measuring how long it took.
+	var started atomic.Int32
+	allStarted := make(chan struct{})
+	for i := 0; i < checkCount; i++ {
 		runner.AddFunc(func(ctx context.Context) CheckResult {
-			callCount++
-			time.Sleep(10 * time.Millisecond)
+			if started.Add(1) == checkCount {
+				close(allStarted)
+			}
+			<-allStarted
 			return NewCheckResult("check", "passed")
 		})
 	}
 
-	start := time.Now()
-	result := runner.Run(context.Background())
-	duration := time.Since(start)
+	done := make(chan ValidationResult, 1)
+	go func() { done <- runner.Run(context.Background()) }()
 
-	// Parallel execution should be faster than sequential
-	// If sequential, would take 50ms+, parallel should be ~10ms
-	assert.Less(t, duration, 30*time.Millisecond, "Parallel execution should be faster")
-	assert.True(t, result.Valid)
-	assert.Len(t, result.Checks, 5)
+	select {
+	case result := <-done:
+		assert.True(t, result.Valid)
+		assert.Len(t, result.Checks, checkCount)
+		assert.EqualValues(t, checkCount, started.Load())
+	case <-time.After(hangDeadline):
+		t.Fatal("checks did not run concurrently: the runner is blocked waiting on the first check")
+	}
 }
 
 func TestNewCheckResult(t *testing.T) {

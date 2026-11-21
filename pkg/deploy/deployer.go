@@ -160,6 +160,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 		// Monitoring files go in cluster directory
 		monitoringDir := filepath.Join(metaDir, "monitoring")
 		monitoringConfig := monitoring.DefaultConfig()
+		monitoringConfig.ClusterName = cfg.ClusterName
 
 		// Get local executor for monitoring (monitoring runs locally even for remote clusters)
 		localExec := executor.NewLocalExecutor()

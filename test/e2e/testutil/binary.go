@@ -332,9 +332,9 @@ func AssertStderrContains(t *testing.T, result *CommandResult, expected string) 
 	}
 }
 
-// Cache directories shared from the developer's real storage so isolated
-// tests do not re-download MongoDB and supervisord for every run.
-var sharedCacheDirs = []string{"packages", "bin"}
+// Caches shared from the developer's real storage so isolated tests do not
+// re-download MongoDB, supervisord and the MongoDB version index for every run.
+var sharedCacheDirs = []string{"packages", "bin", "mongo-versions.json"}
 
 // seedBinaryCaches links the real binary caches into an isolated storage
 // directory. Missing real caches are skipped; mup then downloads as usual.

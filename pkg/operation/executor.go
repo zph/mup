@@ -96,6 +96,12 @@ func (e *Executor) RegisterHandler(opType plan.OperationType, handler OperationH
 	e.handlers[opType] = handler
 }
 
+// Supports reports whether a handler is registered for an operation type.
+func (e *Executor) Supports(opType plan.OperationType) bool {
+	_, ok := e.handlers[opType]
+	return ok
+}
+
 // Execute executes a single operation
 func (e *Executor) Execute(ctx context.Context, op *plan.PlannedOperation) (*apply.OperationResult, error) {
 	// Get the appropriate handler
@@ -110,13 +116,48 @@ func (e *Executor) Execute(ctx context.Context, op *plan.PlannedOperation) (*app
 		return nil, fmt.Errorf("failed to get executor: %w", err)
 	}
 
-	// Execute the operation
+	// LOCAL-030: skip work that is already in place
+	if e.alreadyComplete(ctx, handler, op, exec) {
+		return &apply.OperationResult{
+			Success: true,
+			Output:  fmt.Sprintf("%s: already complete, skipped", op.Description),
+			Changes: op.Changes,
+		}, nil
+	}
+
 	result, err := handler.Execute(ctx, op, exec)
 	if err != nil {
 		return nil, fmt.Errorf("operation execution failed: %w", err)
 	}
 
+	// LOCAL-030: verify the result. Simulated runs change nothing real, so
+	// there is nothing to verify.
+	if !isSimulated(exec) {
+		postResult, err := handler.PostHook(ctx, op, exec)
+		if err != nil {
+			return nil, fmt.Errorf("post-execution verification failed: %w", err)
+		}
+		if !postResult.Valid {
+			return nil, fmt.Errorf("post-execution verification failed: %v", postResult.Errors)
+		}
+	}
+
 	return result, nil
+}
+
+// alreadyComplete reports whether an operation's effect is already in place.
+// A check that errors counts as "not complete": the operation runs and reports
+// its own error. Simulated runs never skip, so they show the whole plan.
+// LOCAL-030
+func (e *Executor) alreadyComplete(ctx context.Context, handler OperationHandler, op *plan.PlannedOperation, exec executor.Executor) bool {
+	if isSimulated(exec) {
+		return false
+	}
+	complete, err := handler.IsComplete(ctx, op, exec)
+	if err != nil {
+		return false
+	}
+	return complete
 }
 
 // Validate performs pre-execution validation
@@ -131,6 +172,12 @@ func (e *Executor) Validate(ctx context.Context, op *plan.PlannedOperation) erro
 	exec, err := e.getExecutor(op)
 	if err != nil {
 		return fmt.Errorf("failed to get executor: %w", err)
+	}
+
+	// LOCAL-030: pre-conditions describe the state before the operation runs
+	// (for example "port is free"), so they do not apply once it has run.
+	if e.alreadyComplete(ctx, handler, op, exec) {
+		return nil
 	}
 
 	// Run pre-conditions from the plan

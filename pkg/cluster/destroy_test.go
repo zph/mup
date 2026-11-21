@@ -95,3 +95,47 @@ func TestDestroy_KeepDataPreservesDataDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, clusters, testClusterName)
 }
+
+// LOCAL-040: a deploy that failed before saving metadata can still be destroyed.
+func TestDestroy_PartialDeploymentWithoutMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	mgr, err := NewManager()
+	require.NoError(t, err)
+
+	clusterDir := mgr.metaMgr.GetClusterDir(testClusterName)
+	require.NoError(t, os.MkdirAll(filepath.Join(clusterDir, "plans"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(clusterDir, "v7.0.0", "mongod-30000", "log"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(clusterDir, "plans", "p.json"), []byte("{}"), 0o644))
+
+	require.NoError(t, mgr.Destroy(context.Background(), testClusterName, false))
+
+	assert.NoDirExists(t, clusterDir)
+}
+
+// LOCAL-040: a name with neither metadata nor a directory is still "not found".
+func TestDestroy_UnknownCluster(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	mgr, err := NewManager()
+	require.NoError(t, err)
+
+	err = mgr.Destroy(context.Background(), "no-such-cluster", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// LOCAL-040
+func TestSupervisorDirs(t *testing.T) {
+	clusterDir := t.TempDir()
+	for _, version := range []string{"v7.0.0", "v7.0.48"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(clusterDir, version), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(clusterDir, version, "supervisor.ini"), []byte("[supervisord]\n"), 0o644))
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(clusterDir, "v6.0.0"), 0o755)) // no supervisor config
+	require.NoError(t, os.MkdirAll(filepath.Join(clusterDir, "data"), 0o755))
+
+	dirs, err := supervisorDirs(clusterDir)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(clusterDir, "v7.0.0"), filepath.Join(clusterDir, "v7.0.48")}, dirs)
+}

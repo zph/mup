@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -96,6 +97,39 @@ func (e *LocalExecutor) RemoveDirectory(path string) error {
 }
 
 // Execute runs a command and returns its output
+// commandKillGrace is how long a cancelled command gets to exit before its
+// output pipes are abandoned.
+const commandKillGrace = 5 * time.Second
+
+// ExecuteContext runs a shell command that is stopped when ctx ends. The
+// command runs in its own process group so that anything it spawned is
+// stopped with it.
+// LOCAL-042
+func (e *LocalExecutor) ExecuteContext(ctx context.Context, command string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("command not started: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = commandKillGrace
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("command stopped: %w\nstderr: %s", ctxErr, stderr.String())
+		}
+		return "", fmt.Errorf("command failed: %w\nstderr: %s", err, stderr.String())
+	}
+	return stdout.String(), nil
+}
+
 func (e *LocalExecutor) Execute(command string) (string, error) {
 	cmd := exec.Command("sh", "-c", command)
 	var stdout, stderr bytes.Buffer
