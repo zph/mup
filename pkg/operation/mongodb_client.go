@@ -3,7 +3,6 @@ package operation
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -35,8 +34,7 @@ func NewMongoDBClientForMongos(ctx context.Context, host string, exec executor.E
 }
 
 func newMongoDBClient(ctx context.Context, host string, exec executor.Executor, direct bool) (*MongoDBClient, error) {
-	execType := fmt.Sprintf("%T", exec)
-	isSimulation := strings.Contains(execType, "Simulation")
+	isSimulation := isSimulated(exec)
 
 	client := &MongoDBClient{
 		executor:     exec,

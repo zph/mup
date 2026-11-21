@@ -3,7 +3,6 @@ package deploy
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -72,8 +71,6 @@ type DeployConfig struct {
 	Version           string
 	Variant           Variant // MongoDB variant
 	TopologyFile      string
-	SSHUser           string
-	IdentityFile      string
 	SkipConfirm       bool
 	DisableMonitoring bool // Disable monitoring deployment
 }
@@ -125,9 +122,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 			return nil, fmt.Errorf("failed to allocate ports: %w", err)
 		}
 	} else {
-		fmt.Println("Deployment mode: REMOTE (SSH-based deployment)")
-		// TODO: Create SSHExecutors when SSH support is implemented
-		return nil, fmt.Errorf("remote deployment not yet implemented")
+		return nil, fmt.Errorf("remote deployment is not supported: all hosts must be local")
 	}
 
 	// Print topology summary
@@ -140,11 +135,10 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	fmt.Printf("Using %d executor(s)\n", len(executors))
 
 	// Determine metadata directory
-	homeDir, err := os.UserHomeDir()
+	metaDir, err := paths.ClusterDir(cfg.ClusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, err
 	}
-	metaDir := filepath.Join(homeDir, ".mup", "storage", "clusters", cfg.ClusterName)
 
 	// Initialize template manager
 	templateMgr, err := template.NewManager()
@@ -184,8 +178,7 @@ func NewDeployer(cfg DeployConfig) (*Deployer, error) {
 	// REQ-PM-009 to REQ-PM-015: Initialize cluster layout manager
 	layout := paths.NewClusterLayout(metaDir)
 
-	// REQ-PM-002: Initialize local path resolver for local deployment
-	// TODO: For remote deployment, use RemotePathResolver with topology global config
+	// REQ-PM-002: Initialize local path resolver
 	pathResolver := paths.NewLocalPathResolver(metaDir, cfg.Version)
 
 	fmt.Println("✓ Phase 1 complete: Topology validated")

@@ -59,7 +59,7 @@ func (a *DefaultApplier) Apply(ctx context.Context, p *plan.Plan) (*ApplyState, 
 
 	// Save initial state
 	if err := a.stateManager.SaveState(state); err != nil {
-		return nil, fmt.Errorf("failed to save initial state: %w", err)
+		return state, fmt.Errorf("failed to save initial state: %w", err)
 	}
 
 	// Execute before_apply hook
@@ -89,7 +89,7 @@ func (a *DefaultApplier) Apply(ctx context.Context, p *plan.Plan) (*ApplyState, 
 		if a.paused {
 			state.UpdateStatus(StatusPaused)
 			if err := a.stateManager.SaveState(state); err != nil {
-				return nil, fmt.Errorf("failed to save paused state: %w", err)
+				return state, fmt.Errorf("failed to save paused state: %w", err)
 			}
 			return state, fmt.Errorf("apply paused by user")
 		}
@@ -98,7 +98,7 @@ func (a *DefaultApplier) Apply(ctx context.Context, p *plan.Plan) (*ApplyState, 
 	// Mark as completed
 	state.UpdateStatus(StatusCompleted)
 	if err := a.stateManager.SaveState(state); err != nil {
-		return nil, fmt.Errorf("failed to save completed state: %w", err)
+		return state, fmt.Errorf("failed to save completed state: %w", err)
 	}
 
 	// Execute after_apply hook
@@ -245,6 +245,12 @@ func (a *DefaultApplier) executeParallel(ctx context.Context, operations []plan.
 
 // executeOperation executes a single operation
 func (a *DefaultApplier) executeOperation(ctx context.Context, op *plan.PlannedOperation, _ *plan.Plan, state *ApplyState) error {
+	// LOCAL-013: an operation completed in an earlier run is not repeated
+	if state.IsOperationCompleted(op.ID) {
+		state.Log("info", state.CurrentPhase, op.ID, fmt.Sprintf("Skipping (already completed): %s", op.Description))
+		return nil
+	}
+
 	state.StartOperation(op.ID)
 	state.Log("info", state.CurrentPhase, op.ID, fmt.Sprintf("Executing: %s", op.Description))
 
@@ -283,32 +289,36 @@ func (a *DefaultApplier) executeOperation(ctx context.Context, op *plan.PlannedO
 // Resume resumes a paused or failed apply from a checkpoint
 func (a *DefaultApplier) Resume(ctx context.Context, state *ApplyState) (*ApplyState, error) {
 	if !state.CanResume() {
-		return nil, fmt.Errorf("cannot resume apply in status: %s", state.Status)
+		return state, fmt.Errorf("cannot resume apply in status: %s", state.Status)
+	}
+
+	// LOCAL-014: load the plan before touching state, so a resume that cannot
+	// start leaves the apply resumable
+	planPath := a.stateManager.GetPlanPath(state.PlanID)
+	p, err := plan.LoadFromFile(planPath)
+	if err != nil {
+		return state, fmt.Errorf("failed to load plan: %w", err)
+	}
+
+	currentPhaseIndex := a.findPhaseIndex(p, state.CurrentPhase)
+	if currentPhaseIndex == -1 {
+		return state, fmt.Errorf("could not find current phase: %s", state.CurrentPhase)
 	}
 
 	state.UpdateStatus(StatusRunning)
 	if err := a.stateManager.SaveState(state); err != nil {
-		return nil, fmt.Errorf("failed to save resumed state: %w", err)
+		return state, fmt.Errorf("failed to save resumed state: %w", err)
 	}
 
-	// Load the original plan
-	planPath := a.stateManager.GetPlanPath(state.PlanID)
-	p, err := plan.LoadFromFile(planPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load plan: %w", err)
-	}
-
-	// Find where we left off and continue
-	currentPhaseIndex := a.findPhaseIndex(p, state.CurrentPhase)
-	if currentPhaseIndex == -1 {
-		return nil, fmt.Errorf("could not find current phase: %s", state.CurrentPhase)
-	}
-
-	// Resume from current phase
+	// LOCAL-013: completed phases and operations are skipped
 	for i := currentPhaseIndex; i < len(p.Phases); i++ {
 		phase := p.Phases[i]
+		if state.IsPhaseCompleted(phase.Name) {
+			continue
+		}
 		if err := a.executePhase(ctx, &phase, p, state); err != nil {
 			state.UpdateStatus(StatusFailed)
+			state.FailPhase(phase.Name, err)
 			if saveErr := a.stateManager.SaveState(state); saveErr != nil {
 				state.Log("error", phase.Name, "", fmt.Sprintf("failed to save state: %v", saveErr))
 			}
@@ -318,7 +328,7 @@ func (a *DefaultApplier) Resume(ctx context.Context, state *ApplyState) (*ApplyS
 
 	state.UpdateStatus(StatusCompleted)
 	if err := a.stateManager.SaveState(state); err != nil {
-		return nil, fmt.Errorf("failed to save completed state: %w", err)
+		return state, fmt.Errorf("failed to save completed state: %w", err)
 	}
 
 	return state, nil

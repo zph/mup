@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,7 +22,6 @@ type Topology struct {
 // GlobalConfig contains global configuration for all nodes
 type GlobalConfig struct {
 	User            string            `yaml:"user"`
-	SSHPort         int               `yaml:"ssh_port"`
 	DeployDir       string            `yaml:"deploy_dir"`
 	DataDir         string            `yaml:"data_dir"`
 	LogDir          string            `yaml:"log_dir"`
@@ -192,21 +192,18 @@ func (t *Topology) Validate() error {
 		return fmt.Errorf("topology must contain at least one node")
 	}
 
-	// Validate global config
-	if t.Global.User == "" {
-		return fmt.Errorf("global.user is required")
-	}
-	if t.Global.DeployDir == "" {
-		return fmt.Errorf("global.deploy_dir is required")
-	}
-	if t.Global.DataDir == "" {
-		t.Global.DataDir = filepath.Join(t.Global.DeployDir, "data")
-	}
-	if t.Global.LogDir == "" {
-		t.Global.LogDir = filepath.Join(t.Global.DeployDir, "logs")
-	}
-	if t.Global.ConfigDir == "" {
-		t.Global.ConfigDir = filepath.Join(t.Global.DeployDir, "conf")
+	// LOCAL-007: global.user and global.deploy_dir are not required; mup is
+	// local-only and derives every path from the cluster directory.
+	if t.Global.DeployDir != "" {
+		if t.Global.DataDir == "" {
+			t.Global.DataDir = filepath.Join(t.Global.DeployDir, "data")
+		}
+		if t.Global.LogDir == "" {
+			t.Global.LogDir = filepath.Join(t.Global.DeployDir, "logs")
+		}
+		if t.Global.ConfigDir == "" {
+			t.Global.ConfigDir = filepath.Join(t.Global.DeployDir, "conf")
+		}
 	}
 
 	// Check if this is a local deployment (allows port 0 for auto-allocation)
@@ -291,31 +288,39 @@ func (t *Topology) GetTopologyType() string {
 	return "standalone"
 }
 
+// Hosts treated as the local machine.
+const (
+	hostLocalhost    = "localhost"
+	hostLoopbackIPv4 = "127.0.0.1"
+	hostLoopbackIPv6 = "::1"
+)
+
+func isLocalHost(host string) bool {
+	return host == hostLocalhost || host == hostLoopbackIPv4 || host == hostLoopbackIPv6
+}
+
 // IsLocalDeployment returns true if all hosts are localhost
 func (t *Topology) IsLocalDeployment() bool {
-	isLocal := func(host string) bool {
-		return host == "localhost" || host == "127.0.0.1" || host == "::1"
-	}
-
-	for _, node := range t.Mongod {
-		if !isLocal(node.Host) {
+	for _, host := range t.GetAllHosts() {
+		if !isLocalHost(host) {
 			return false
 		}
 	}
-
-	for _, node := range t.Mongos {
-		if !isLocal(node.Host) {
-			return false
-		}
-	}
-
-	for _, node := range t.ConfigSvr {
-		if !isLocal(node.Host) {
-			return false
-		}
-	}
-
 	return true
+}
+
+// NonLocalHosts returns the sorted, unique hosts that are not the local
+// machine. Empty hosts are left for Validate to report.
+// LOCAL-005
+func (t *Topology) NonLocalHosts() []string {
+	var hosts []string
+	for _, host := range t.GetAllHosts() {
+		if host != "" && !isLocalHost(host) {
+			hosts = append(hosts, host)
+		}
+	}
+	sort.Strings(hosts)
+	return hosts
 }
 
 // GetAllHosts returns a unique list of all hosts in the topology

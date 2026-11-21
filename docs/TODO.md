@@ -16,8 +16,7 @@ This document tracks the implementation roadmap for Mup commands and features, b
 - [x] Topology Parser - YAML parsing, validation, and port allocation
 - [x] Binary Manager - Download, cache, and manage MongoDB binaries (including mongosh/mongo)
 - [x] Template Manager - Version-aware configuration templates
-- [x] Executor Interface - Unified local/remote execution (local ✅, SSH ⏳)
-- [ ] SSH Executor - Remote deployment support (planned)
+- [x] Executor Interface - Local execution (SSH executor removed 2026-11-20; mup is local-only)
 
 ### ✅ Phase 3: Basic Deployment (Mostly Complete)
 - [x] `mup cluster deploy` - Full 5-phase deployment workflow
@@ -29,7 +28,7 @@ This document tracks the implementation roadmap for Mup commands and features, b
 - [x] `mup cluster connect` - Connect to clusters using mongosh/mongo
 - [ ] `mup cluster restart` - Restart clusters (planned)
 
-**Note:** All Phase 3 commands work for local deployments. Remote SSH-based deployment is planned for future phases.
+**Note:** All Phase 3 commands work for local deployments. Remote deployment is out of scope.
 
 ---
 
@@ -44,17 +43,6 @@ This document tracks the implementation roadmap for Mup commands and features, b
   - [x] Command execution (execute, background)
   - [x] Process management (is running, kill, stop)
   - [x] System information (OS info, disk space, port checking)
-- [ ] SSH executor implementation (`pkg/ssh/`)
-  - [ ] SSH connection manager with connection pooling
-  - [ ] Key-based authentication (default: `~/.ssh/id_rsa`)
-  - [ ] SSH agent support
-  - [ ] Custom identity file per deployment
-  - [ ] Execute remote commands with output capture
-  - [ ] File upload/download (SCP/SFTP)
-  - [ ] Directory creation with permissions
-  - [ ] Connectivity checking
-  - [ ] Timeout and retry logic
-  - [ ] Parallel execution across hosts
 
 #### Meta Manager (`pkg/meta/`) ✅
 - [x] YAML-based state storage at `~/.mup/storage/clusters/<name>/meta.yaml`
@@ -99,8 +87,6 @@ Deploy a new MongoDB cluster from topology file.
 ```bash
 mup cluster deploy <cluster-name> <topology-file> [flags]
   --version string           MongoDB version (default: 7.0)
-  --user string              SSH user (default from topology)
-  --identity-file string     SSH private key path
   --yes                      Skip confirmation prompts
   --timeout duration         Deployment timeout (default: 30m)
 ```
@@ -109,7 +95,6 @@ mup cluster deploy <cluster-name> <topology-file> [flags]
 - [x] Command structure and flags
 - [x] Pre-flight checks (for local deployments)
   - [x] Port availability checks
-  - [ ] SSH connectivity to all hosts (remote deployments)
   - [ ] Disk space verification
   - [ ] User/group existence or creation
   - [ ] OS compatibility validation
@@ -513,7 +498,7 @@ mup cluster exec <cluster-name> -- <command> [flags]
 
 ### Unit Tests
 - [ ] Test all packages in isolation
-- [ ] Mock external dependencies (SSH, MongoDB connections)
+- [ ] Mock external dependencies (MongoDB connections)
 - [ ] Test state management operations
 - [ ] Test configuration generation
 
@@ -550,10 +535,10 @@ mup cluster exec <cluster-name> -- <command> [flags]
 - **State Management:** Playground uses JSON for state; production clusters use YAML for consistency with topology files
 - **Deployment Modes:**
   - Local deployments are fully functional (all Phase 3 commands work)
-  - Remote SSH-based deployments are planned for future phases
+  - Remote deployments are out of scope (SSH executor removed)
 - **Binary Management:** MongoDB binaries and their wire-compatible shells are acquired and cached from the server distribution or a pinned standalone download
 - **Template System:** Version-aware templates handle MongoDB version differences (e.g., `storage.journal.enabled` removed in 6.1+)
 - **Process Management:** Process death detection automatically reads and displays log files when processes die during startup
 - **Connection Commands:** Generated from the shared wire-protocol shell compatibility policy
 - **Replica Sets & Sharding:** Initialization uses MongoDB Go driver for robust, programmatic configuration
-- **Future Work:** SSH executor, remote deployments, rolling operations, and advanced features are planned
+- **Future Work:** Rolling operations, and advanced features are planned

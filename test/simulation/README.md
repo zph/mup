@@ -56,19 +56,6 @@ mup cluster deploy test topology.yaml --version 7.0 \
 
 ---
 
-### existing-cluster.yaml
-Simulates an already-running MongoDB cluster for import testing.
-
-**Usage:**
-```bash
-mup cluster import prod-cluster --auto-detect \
-  --simulate --simulate-scenario test/simulation/existing-cluster.yaml
-```
-
-**Expected behavior:** Import should detect running processes and existing files.
-
----
-
 ## Creating Custom Scenarios
 
 ### Scenario File Format

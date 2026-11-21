@@ -5,11 +5,11 @@ global:
 
 mongod_servers:
   - host: localhost
-    port: 27017
+    port: 47017
     replica_set: rs0
   - host: localhost
-    port: 27018
+    port: 47018
     replica_set: rs0
   - host: localhost
-    port: 27019
+    port: 47019
     replica_set: rs0

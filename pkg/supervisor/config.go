@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"text/template"
 
+	"github.com/zph/mup/pkg/paths"
+
 	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/topology"
 )
@@ -565,11 +567,11 @@ environment = HOME="{{.HomeDir}}",USER="{{.User}}"
 // and a supervisorctl wrapper in the cluster's main bin directory
 func (g *ConfigGenerator) GenerateWrapperScripts() error {
 	// Get supervisor binary path
-	homeDir, err := os.UserHomeDir()
+	binCacheDir, err := paths.BinCacheDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
 	}
-	supervisorBin := filepath.Join(homeDir, ".mup", "storage", "bin", "supervisor", "v1.0.0",
+	supervisorBin := filepath.Join(binCacheDir, "supervisor", "v1.0.0",
 		fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH), "supervisord")
 
 	configPath := filepath.Join(g.clusterDir, "supervisor.ini")

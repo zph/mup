@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -90,7 +91,7 @@ func (c *Checker) Check(ctx context.Context) (*ClusterHealth, error) {
 		if c.metadata.Monitoring.VictoriaMetricsURL != "" {
 			health.Ports.Monitoring = append(health.Ports.Monitoring, PortInfo{
 				Host:        "localhost",
-				Port:        8428,
+				Port:        portFromURL(c.metadata.Monitoring.VictoriaMetricsURL, defaultVictoriaMetricsPort),
 				Service:     "victoria-metrics",
 				Description: "Victoria Metrics",
 				Status:      health.Monitoring.VictoriaMetrics.Status,
@@ -100,7 +101,7 @@ func (c *Checker) Check(ctx context.Context) (*ClusterHealth, error) {
 		if c.metadata.Monitoring.GrafanaURL != "" {
 			health.Ports.Monitoring = append(health.Ports.Monitoring, PortInfo{
 				Host:        "localhost",
-				Port:        3000,
+				Port:        portFromURL(c.metadata.Monitoring.GrafanaURL, defaultGrafanaPort),
 				Service:     "grafana",
 				Description: "Grafana",
 				Status:      health.Monitoring.Grafana.Status,
@@ -178,14 +179,15 @@ func (c *Checker) checkNode(ctx context.Context, node meta.NodeMetadata) NodeHea
 			health.Uptime = time.Duration(status.Uptime) * time.Second
 
 			// Map supervisor state to our status
-			switch status.State {
-			case "RUNNING":
+			// LOCAL-011: compare parsed state, not the raw string
+			switch state := status.ProcessState(); {
+			case state.IsRunning():
 				health.Status = "running"
-			case "STOPPED":
+			case state == supervisor.StateStopped:
 				health.Status = "stopped"
-			case "STARTING":
+			case state == supervisor.StateStarting:
 				health.Status = "starting"
-			case "FATAL", "EXITED":
+			case state.IsFailed():
 				health.Status = "failed"
 			default:
 				health.Status = status.State
@@ -232,7 +234,7 @@ func (c *Checker) checkMonitoring(_ context.Context) MonitoringHealth {
 
 	// Check Victoria Metrics
 	if c.metadata.Monitoring.VictoriaMetricsURL != "" {
-		vmStatus := c.checkPort("localhost", 8428)
+		vmStatus := c.checkPort("localhost", portFromURL(c.metadata.Monitoring.VictoriaMetricsURL, defaultVictoriaMetricsPort))
 		health.VictoriaMetrics = ComponentHealth{
 			Status: vmStatus,
 			URL:    c.metadata.Monitoring.VictoriaMetricsURL,
@@ -241,7 +243,7 @@ func (c *Checker) checkMonitoring(_ context.Context) MonitoringHealth {
 
 	// Check Grafana
 	if c.metadata.Monitoring.GrafanaURL != "" {
-		grafanaStatus := c.checkPort("localhost", 3000)
+		grafanaStatus := c.checkPort("localhost", portFromURL(c.metadata.Monitoring.GrafanaURL, defaultGrafanaPort))
 		health.Grafana = ComponentHealth{
 			Status: grafanaStatus,
 			URL:    c.metadata.Monitoring.GrafanaURL,
@@ -414,4 +416,25 @@ func parseSupervisorHTTPPort(configPath string) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no inet_http_server port found in %s", configPath)
+}
+
+// Ports the monitoring stack uses when a cluster's metadata records no URL port.
+const (
+	defaultVictoriaMetricsPort = 8428
+	defaultGrafanaPort         = 3000
+)
+
+// portFromURL returns the port in rawURL, or fallback when there is none.
+// LOCAL-028: health checks use the ports a cluster was deployed with instead
+// of assuming the defaults.
+func portFromURL(rawURL string, fallback int) int {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fallback
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		return fallback
+	}
+	return port
 }

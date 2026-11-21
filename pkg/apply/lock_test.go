@@ -227,26 +227,32 @@ func TestLockManager_StartLockRenewal(t *testing.T) {
 	mgr, err := apply.NewLockManager(tmpDir)
 	require.NoError(t, err)
 
-	// Acquire lock with short timeout
-	lock, err := mgr.AcquireLock("test-cluster", "plan-123", "deploy", 100*time.Millisecond)
+	// Lifetimes are far longer than the test so scheduling delays cannot
+	// expire the lock; only the renewal interval is short.
+	const (
+		lockLifetime  = time.Hour
+		extension     = 2 * time.Hour
+		renewInterval = 5 * time.Millisecond
+		renewDeadline = 10 * time.Second
+	)
+
+	lock, err := mgr.AcquireLock("test-cluster", "plan-123", "deploy", lockLifetime)
 	require.NoError(t, err)
 	originalExpiration := lock.ExpiresAt
 
-	// Start renewal with shorter duration
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	mgr.StartLockRenewal(ctx, lock, 50*time.Millisecond, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	renewalStopped := mgr.StartLockRenewal(ctx, lock, renewInterval, extension)
+	defer func() {
+		cancel()
+		<-renewalStopped
+	}()
 
-	// Wait for at least one renewal
-	time.Sleep(75 * time.Millisecond)
-
-	// Check that lock was renewed
-	assert.True(t, lock.ExpiresAt.After(originalExpiration))
-	assert.Greater(t, lock.RenewCount, 0)
-
-	// Wait for goroutine to finish
-	<-ctx.Done()
-	time.Sleep(10 * time.Millisecond)
+	// The renewal goroutine works on its own copy; the lock file is the
+	// source of truth.
+	require.Eventually(t, func() bool {
+		current, err := mgr.GetLock("test-cluster")
+		return err == nil && current.RenewCount > 0 && current.ExpiresAt.After(originalExpiration)
+	}, renewDeadline, renewInterval)
 }
 
 // REQ-PES-051: Test cleanup of expired locks

@@ -2,7 +2,9 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/zph/mup/pkg/deploy"
@@ -30,6 +32,12 @@ type UpgraderInterface interface {
 
 	// UpgradeMongos upgrades mongos instances [UPG-004]
 	UpgradeMongos(ctx context.Context) error
+
+	// PauseBalancer stops the balancer before a sharded upgrade. UPGSAFE-008
+	PauseBalancer(ctx context.Context) error
+
+	// RestoreBalancer starts the balancer again if the upgrade stopped it. UPGSAFE-008
+	RestoreBalancer(ctx context.Context) error
 
 	// PostUpgradeTasks performs post-upgrade tasks (FCV, etc.) [UPG-008]
 	PostUpgradeTasks(ctx context.Context) error
@@ -88,19 +96,29 @@ func NewUpgrader(config UpgradeConfig) (*Upgrader, error) {
 	}
 
 	// Detect deployment mode
-	isLocal := clusterMeta.DeployMode == "local"
+	isLocal := clusterMeta.DeployMode == meta.DeployModeLocal
 
 	// Initialize or load upgrade state
 	var state *UpgradeState
 	existingState, err := config.StateManager.LoadState()
 	if err != nil {
-		// No existing state, create new
+		if !errors.Is(err, os.ErrNotExist) {
+			// A state file that exists but cannot be read is not "no upgrade"
+			return nil, fmt.Errorf("cannot read existing upgrade state: %w", err)
+		}
+		if config.ToVersion == "" {
+			return nil, fmt.Errorf("no upgrade state found to resume and no target version given")
+		}
 		fullFromVersion := fmt.Sprintf("%s-%s", clusterMeta.Variant, config.FromVersion)
 		fullToVersion := fmt.Sprintf("%s-%s", clusterMeta.Variant, config.ToVersion)
 		state = config.StateManager.InitializeState(config.ClusterName, fullFromVersion, fullToVersion)
 		state.PromptLevel = string(config.PromptLevel)
+		state.UpgradeFCV = config.UpgradeFCV
 	} else {
-		// Resume from existing state
+		// UPGSAFE-009: continue the existing upgrade only if it has the same target
+		if err := reconcileWithExistingState(&config, clusterMeta.Variant, existingState); err != nil {
+			return nil, err
+		}
 		state = existingState
 		fmt.Printf("Found existing upgrade state (ID: %s, status: %s)\n", state.UpgradeID, state.OverallStatus)
 	}
@@ -132,17 +150,55 @@ func (u *Upgrader) SetImpl(impl UpgraderInterface) {
 // Upgrade executes the full phased upgrade workflow
 // [UPG-004] Phased upgrade workflow
 func (u *Upgrader) Upgrade(ctx context.Context) error {
+	err := u.runUpgrade(ctx)
+	if err != nil {
+		u.handleUpgradeFailure(ctx, err)
+	}
+	return err
+}
+
+// failureHookTimeout bounds the on-upgrade-failure hook, which runs on its
+// own context because the upgrade's context may already be cancelled.
+const failureHookTimeout = 5 * time.Minute
+
+// handleUpgradeFailure records a failed upgrade so it can be resumed and runs
+// the on-upgrade-failure hook. A paused upgrade is not a failure.
+// UPGSAFE-009, UPGSAFE-011
+func (u *Upgrader) handleUpgradeFailure(ctx context.Context, cause error) {
+	u.state.mu.Lock()
+	if u.state.OverallStatus == OverallStatusPaused {
+		u.state.mu.Unlock()
+		return
+	}
+	u.state.OverallStatus = OverallStatusFailed
+	u.state.mu.Unlock()
+
+	if err := u.config.StateManager.SaveState(u.state); err != nil {
+		fmt.Printf("Warning: failed to record upgrade failure (%v): %v\n", cause, err)
+	} else {
+		fmt.Printf("\nUpgrade stopped. Resume with: mup cluster upgrade %s --resume\n", u.config.ClusterName)
+	}
+
+	hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failureHookTimeout)
+	defer cancel()
+	if err := u.config.HookRegistry.Execute(hookCtx, HookContext{
+		HookType:    HookOnUpgradeFailure,
+		ClusterName: u.config.ClusterName,
+		FromVersion: u.config.FromVersion,
+		ToVersion:   u.config.ToVersion,
+		Error:       cause,
+	}); err != nil {
+		fmt.Printf("Warning: on-upgrade-failure hook failed: %v\n", err)
+	}
+}
+
+func (u *Upgrader) runUpgrade(ctx context.Context) error {
 	fmt.Println("Starting MongoDB Cluster Upgrade")
 	fmt.Println("================================")
 	fmt.Printf("Cluster: %s\n", u.config.ClusterName)
 	fmt.Printf("From: %s\n", u.state.PreviousVersion)
 	fmt.Printf("To: %s\n", u.state.TargetVersion)
-	fmt.Printf("Mode: %s\n", func() string {
-		if u.isLocal {
-			return "local"
-		}
-		return "remote"
-	}())
+	fmt.Printf("Mode: %s\n", meta.DeployModeLocal)
 	fmt.Printf("Prompt Level: %s\n", u.config.PromptLevel)
 	fmt.Println()
 
@@ -161,30 +217,11 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 		return fmt.Errorf("on-upgrade-start hook failed: %w", err)
 	}
 
-	// Defer on-upgrade-failure hook to run if upgrade fails
-	var upgradeErr error
-	defer func() {
-		if upgradeErr != nil {
-			// Execute on-upgrade-failure hook (best effort, don't fail on hook error)
-			hookErr := u.config.HookRegistry.Execute(ctx, HookContext{
-				HookType:    HookOnUpgradeFailure,
-				ClusterName: u.config.ClusterName,
-				FromVersion: u.config.FromVersion,
-				ToVersion:   u.config.ToVersion,
-				Error:       upgradeErr,
-			})
-			if hookErr != nil {
-				fmt.Printf("Warning: on-upgrade-failure hook failed: %v\n", hookErr)
-			}
-		}
-	}()
-
 	// Phase 0: Pre-flight validation
 	if err := u.executePhase(ctx, PhasePreFlight, func(ctx context.Context) error {
 		return u.impl.ValidatePrerequisites(ctx)
 	}); err != nil {
-		upgradeErr = fmt.Errorf("pre-flight validation failed: %w", err)
-		return upgradeErr
+		return fmt.Errorf("pre-flight validation failed: %w", err)
 	}
 
 	// For local upgrades: Setup version directories and start new supervisor
@@ -218,6 +255,11 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	switch topoType {
 	case "sharded":
 		// Sharded cluster upgrade path
+		// UPGSAFE-008: the balancer stays off while binaries are mixed
+		if err := u.impl.PauseBalancer(ctx); err != nil {
+			return fmt.Errorf("failed to pause balancer: %w", err)
+		}
+
 		// Phase 1: Config servers
 		if err := u.executePhase(ctx, PhaseConfigServers, func(ctx context.Context) error {
 			return u.impl.UpgradeConfigServers(ctx)
@@ -235,6 +277,10 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 			return u.impl.UpgradeMongos(ctx)
 		}); err != nil {
 			return fmt.Errorf("mongos upgrade failed: %w", err)
+		}
+
+		if err := u.impl.RestoreBalancer(ctx); err != nil {
+			return fmt.Errorf("failed to restore balancer: %w", err)
 		}
 
 	case "replica_set":
@@ -471,24 +517,31 @@ func (u *Upgrader) Pause(reason string) error {
 
 // Resume resumes a paused upgrade
 func (u *Upgrader) Resume(ctx context.Context) error {
-	if u.state.OverallStatus != OverallStatusPaused {
-		return fmt.Errorf("cannot resume: upgrade status is %s (expected paused)", u.state.OverallStatus)
+	// UPGSAFE-009: failed and interrupted upgrades resume too, not only paused ones
+	if !canResumeFrom(u.state.OverallStatus) {
+		return fmt.Errorf("cannot resume: upgrade status is %s", u.state.OverallStatus)
 	}
 
-	fmt.Println("Resuming upgrade from checkpoint...")
-	fmt.Printf("Paused at: %s\n", u.state.PausedAt.Format(time.RFC3339))
-	fmt.Printf("Reason: %s\n", u.state.PausedReason)
+	fmt.Printf("Resuming upgrade (status: %s)...\n", u.state.OverallStatus)
+	if u.state.OverallStatus == OverallStatusPaused {
+		fmt.Printf("Paused at: %s\n", u.state.PausedAt.Format(time.RFC3339))
+		fmt.Printf("Reason: %s\n", u.state.PausedReason)
+	}
 	fmt.Printf("Current phase: %s\n", u.state.CurrentPhase)
 
 	// Display status
 	u.config.Prompter.DisplayStatus(u.state)
 
-	// Confirm resume
-	fmt.Print("\nResume upgrade? (yes/no): ")
-	var response string
-	_, _ = fmt.Scanln(&response)
-	if response != "yes" && response != "y" {
-		return fmt.Errorf("resume cancelled by user")
+	// UPGSAFE-002: unattended runs resume without a confirmation
+	if u.config.PromptLevel != PromptLevelNone {
+		fmt.Print("\nResume upgrade? (yes/no): ")
+		var response string
+		if _, err := fmt.Scanln(&response); err != nil {
+			return fmt.Errorf("failed to read resume confirmation (use --prompt-level none for unattended runs): %w", err)
+		}
+		if response != "yes" && response != "y" {
+			return fmt.Errorf("resume cancelled by user")
+		}
 	}
 
 	// Update state to in_progress
@@ -614,7 +667,8 @@ func (u *Upgrader) upgradeNode(ctx context.Context, node interface{}, role strin
 		nodeID = fmt.Sprintf("mongos-%d", n.Port)
 		hostPort = fmt.Sprintf("%s:%d", n.Host, n.Port)
 	case topology.ConfigNode:
-		nodeID = fmt.Sprintf("mongod-%d", n.Port)
+		// Config servers are supervised as "config-<port>"
+		nodeID = fmt.Sprintf("config-%d", n.Port)
 		hostPort = fmt.Sprintf("%s:%d", n.Host, n.Port)
 	default:
 		return fmt.Errorf("unsupported node type: %T", node)

@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 package e2e
@@ -119,10 +120,10 @@ func TestVersionCommand(t *testing.T) {
 // TestInvalidCommand verifies error handling for invalid commands
 func TestInvalidCommand(t *testing.T) {
 	tests := []struct {
-		name         string
-		args         []string
-		shouldFail   bool
-		contains     string
+		name       string
+		args       []string
+		shouldFail bool
+		contains   string
 	}{
 		{
 			name:       "invalid root command",

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/operation"
 	"github.com/zph/mup/pkg/plan"
 )
@@ -38,7 +39,7 @@ func TestCreateSymlinkHandler(t *testing.T) {
 	ctx := context.Background()
 
 	// Phase 1: IsComplete (should be false initially)
-	completed, err := handler.IsComplete(ctx, op, nil)
+	completed, err := handler.IsComplete(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("IsComplete error: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestCreateSymlinkHandler(t *testing.T) {
 	}
 
 	// Phase 2: PreHook (should validate and pass)
-	preResult, err := handler.PreHook(ctx, op, nil)
+	preResult, err := handler.PreHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PreHook error: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestCreateSymlinkHandler(t *testing.T) {
 	}
 
 	// Phase 3: Execute
-	result, err := handler.Execute(ctx, op, nil)
+	result, err := handler.Execute(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestCreateSymlinkHandler(t *testing.T) {
 	}
 
 	// Phase 4: PostHook (should verify)
-	postResult, err := handler.PostHook(ctx, op, nil)
+	postResult, err := handler.PostHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PostHook error: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestCreateSymlinkHandler(t *testing.T) {
 	}
 
 	// Phase 1 Again: IsComplete (should be true now)
-	completed, err = handler.IsComplete(ctx, op, nil)
+	completed, err = handler.IsComplete(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("IsComplete error after creation: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestCreateSymlinkHandler_Idempotency(t *testing.T) {
 	ctx := context.Background()
 
 	// IsComplete should detect existing symlink
-	completed, err := handler.IsComplete(ctx, op, nil)
+	completed, err := handler.IsComplete(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("IsComplete error: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestCreateSymlinkHandler_Idempotency(t *testing.T) {
 	}
 
 	// PreHook should warn about existing symlink
-	preResult, err := handler.PreHook(ctx, op, nil)
+	preResult, err := handler.PreHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PreHook error: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestCreateSymlinkHandler_Idempotency(t *testing.T) {
 	}
 
 	// Execute should still succeed (idempotent)
-	result, err := handler.Execute(ctx, op, nil)
+	result, err := handler.Execute(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestCreateSymlinkHandler_Idempotency(t *testing.T) {
 	}
 
 	// PostHook should verify
-	postResult, err := handler.PostHook(ctx, op, nil)
+	postResult, err := handler.PostHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PostHook error: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestCreateSymlinkHandler_PreHookValidation(t *testing.T) {
 	ctx := context.Background()
 
 	// PreHook should fail validation
-	preResult, err := handler.PreHook(ctx, op, nil)
+	preResult, err := handler.PreHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PreHook error: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestCreateSymlinkHandler_UpdateTarget(t *testing.T) {
 	ctx := context.Background()
 
 	// IsComplete should be false (points to wrong target)
-	completed, err := handler.IsComplete(ctx, op, nil)
+	completed, err := handler.IsComplete(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("IsComplete error: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestCreateSymlinkHandler_UpdateTarget(t *testing.T) {
 	}
 
 	// PreHook should warn about update
-	preResult, err := handler.PreHook(ctx, op, nil)
+	preResult, err := handler.PreHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PreHook error: %v", err)
 	}
@@ -244,7 +245,7 @@ func TestCreateSymlinkHandler_UpdateTarget(t *testing.T) {
 	}
 
 	// Execute should update the symlink
-	result, err := handler.Execute(ctx, op, nil)
+	result, err := handler.Execute(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
@@ -262,7 +263,7 @@ func TestCreateSymlinkHandler_UpdateTarget(t *testing.T) {
 	}
 
 	// PostHook should verify
-	postResult, err := handler.PostHook(ctx, op, nil)
+	postResult, err := handler.PostHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PostHook error: %v", err)
 	}
@@ -298,7 +299,7 @@ func TestCreateSymlinkHandler_RelativePath(t *testing.T) {
 	ctx := context.Background()
 
 	// PreHook should not fail on relative path (can't validate without working dir)
-	preResult, err := handler.PreHook(ctx, op, nil)
+	preResult, err := handler.PreHook(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("PreHook error: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestCreateSymlinkHandler_RelativePath(t *testing.T) {
 	}
 
 	// Execute should succeed
-	result, err := handler.Execute(ctx, op, nil)
+	result, err := handler.Execute(ctx, op, executor.NewLocalExecutor())
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zph/mup/pkg/paths"
 )
 
 const (
@@ -44,11 +46,10 @@ func NewManager(clusterDir, clusterName string) (*Manager, error) {
 	configPath := filepath.Join(clusterDir, "supervisor.ini")
 
 	// Get supervisord binary - cache in ~/.mup/storage/bin
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := paths.BinCacheDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, err
 	}
-	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
 
 	binaryPath, err := GetSupervisordBinary(cacheDir)
 	if err != nil {
@@ -96,11 +97,10 @@ func LoadManager(clusterDir, clusterName string) (*Manager, error) {
 	}
 
 	// Get supervisord binary path
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := paths.BinCacheDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, err
 	}
-	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
 	binaryPath, err := GetSupervisordBinary(cacheDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
@@ -332,44 +332,7 @@ func (m *Manager) GetProcessStatus(name string) (*ProcessStatus, error) {
 		return nil, fmt.Errorf("failed to get status for %s: %w", name, err)
 	}
 
-	// Parse supervisord ctl status output
-	// Format: "progname  STATE  pid 12345, uptime 0:01:23"
-	// Note: May contain ANSI color codes
-	line := strings.TrimSpace(string(output))
-
-	// Remove ANSI color codes
-	line = strings.ReplaceAll(line, "\x1b[0;32m", "")
-	line = strings.ReplaceAll(line, "\x1b[0m", "")
-	line = strings.ReplaceAll(line, "[0;32m", "")
-	line = strings.ReplaceAll(line, "[0m", "")
-
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return nil, fmt.Errorf("unexpected status output format: %s", line)
-	}
-
-	status := &ProcessStatus{
-		Name:  fields[0],
-		State: fields[1],
-	}
-
-	// Extract PID if running - format: "pid 12345,"
-	for i, field := range fields {
-		if field == "pid" && i+1 < len(fields) {
-			pidStr := strings.TrimSuffix(fields[i+1], ",")
-			if pid, err := strconv.Atoi(pidStr); err == nil {
-				status.PID = pid
-			}
-			break
-		}
-	}
-
-	// Get description (rest of line after state)
-	if len(fields) > 2 {
-		status.Description = strings.Join(fields[2:], " ")
-	}
-
-	return status, nil
+	return parseStatusLine(string(output))
 }
 
 // GetAllProcesses returns status for all processes
@@ -388,36 +351,9 @@ func (m *Manager) GetAllProcesses() ([]*ProcessStatus, error) {
 			continue
 		}
 
-		// Remove ANSI color codes
-		line = strings.ReplaceAll(line, "\x1b[0;32m", "")
-		line = strings.ReplaceAll(line, "\x1b[0m", "")
-		line = strings.ReplaceAll(line, "[0;32m", "")
-		line = strings.ReplaceAll(line, "[0m", "")
-
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		status, err := parseStatusLine(line)
+		if err != nil {
 			continue
-		}
-
-		status := &ProcessStatus{
-			Name:  fields[0],
-			State: fields[1],
-		}
-
-		// Extract PID - format: "pid 12345,"
-		for i, field := range fields {
-			if field == "pid" && i+1 < len(fields) {
-				pidStr := strings.TrimSuffix(fields[i+1], ",")
-				if pid, err := strconv.Atoi(pidStr); err == nil {
-					status.PID = pid
-				}
-				break
-			}
-		}
-
-		// Get description
-		if len(fields) > 2 {
-			status.Description = strings.Join(fields[2:], " ")
 		}
 
 		statuses = append(statuses, status)

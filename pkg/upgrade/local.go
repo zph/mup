@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zph/mup/pkg/paths"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -37,6 +39,9 @@ type LocalUpgrader struct {
 	supervisorMgr    *supervisor.Manager // Old supervisor (current version)
 	newSupervisorMgr *supervisor.Manager // New supervisor (target version) - runs alongside old during migration
 	binaryMgr        *deploy.BinaryManager
+
+	// rsProbe overrides how replica set state is read; nil uses the driver.
+	rsProbe replicaSetProbe
 
 	// Version directory management
 	newVersionDir string // Path to new version directory (e.g., ~/.mup/storage/clusters/my-cluster/v4.0.28)
@@ -207,10 +212,7 @@ func (lu *LocalUpgrader) ValidatePrerequisites(ctx context.Context) error {
 		return fmt.Errorf("invalid variant: %w", err)
 	}
 
-	platform := deploy.Platform{
-		OS:   "darwin", // TODO: Get from runtime
-		Arch: "arm64",  // TODO: Get from runtime
-	}
+	platform := deploy.GetCurrentPlatform()
 
 	binPath, err := lu.binaryMgr.GetBinPathWithVariant(lu.config.ToVersion, variant, platform)
 	if err != nil {
@@ -228,17 +230,16 @@ func (lu *LocalUpgrader) ValidatePrerequisites(ctx context.Context) error {
 
 	// 8. Check disk space
 	fmt.Print("  Checking disk space... ")
-	homeDir, err := os.UserHomeDir()
+	mupDir, err := paths.StorageDir()
 	if err != nil {
 		fmt.Println("✗")
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
 	}
 
 	// Simple disk space check (could be enhanced)
-	mupDir := filepath.Join(homeDir, ".mup")
 	if _, err := os.Stat(mupDir); err != nil {
 		fmt.Println("✗")
-		return fmt.Errorf(".mup directory not accessible: %w", err)
+		return fmt.Errorf("mup storage directory not accessible: %w", err)
 	}
 	fmt.Println("✓")
 
@@ -311,7 +312,7 @@ func (lu *LocalUpgrader) UpgradeConfigServers(ctx context.Context) error {
 	}
 
 	// Upgrade as replica set
-	return lu.upgradeReplicaSet(ctx, convertConfigToMongod(lu.config.Topology.ConfigSvr))
+	return lu.upgradeReplicaSet(ctx, convertConfigToMongod(lu.config.Topology.ConfigSvr), true)
 }
 
 // UpgradeShard upgrades a single shard replica set
@@ -332,7 +333,7 @@ func (lu *LocalUpgrader) UpgradeShard(ctx context.Context, shardName string) err
 		return fmt.Errorf("no nodes found for shard %s", shardName)
 	}
 
-	return lu.upgradeReplicaSet(ctx, nodes)
+	return lu.upgradeReplicaSet(ctx, nodes, false)
 }
 
 // UpgradeMongos upgrades mongos instances
@@ -382,6 +383,11 @@ func (lu *LocalUpgrader) PostUpgradeTasks(ctx context.Context) error {
 	fmt.Println("\nPhase 4: Post-Upgrade Tasks")
 	fmt.Println("===========================")
 
+	// UPGSAFE-004: finishing assumes every node runs the new version
+	if err := ensureNoSkippedNodes(lu.state); err != nil {
+		return err
+	}
+
 	// 1. Update cluster metadata with new version
 	fmt.Print("  Updating cluster metadata... ")
 
@@ -420,8 +426,13 @@ func (lu *LocalUpgrader) PostUpgradeTasks(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if response == PromptResponseAbort {
+			// UPGSAFE-003: only an explicit "continue" changes FCV
+			switch criticalPromptAction(response) {
+			case criticalPause:
+				return lu.Pause("User requested pause before FCV upgrade")
+			case criticalAbort:
 				return fmt.Errorf("FCV upgrade aborted by user")
+			case criticalProceed:
 			}
 		}
 
@@ -566,10 +577,7 @@ func (lu *LocalUpgrader) setupVersionDirectories(_ context.Context) error {
 	fmt.Printf("  Downloading MongoDB %s binaries...\n", lu.config.ToVersion)
 
 	// Get current platform
-	platform := deploy.Platform{
-		OS:   "darwin", // TODO: Use runtime.GOOS
-		Arch: "arm64",  // TODO: Use runtime.GOARCH properly mapped
-	}
+	platform := deploy.GetCurrentPlatform()
 
 	// Download binaries (this caches them)
 	binPath, err := lu.binaryMgr.GetBinPathWithVariant(lu.config.ToVersion, lu.config.TargetVariant, platform)
@@ -594,40 +602,14 @@ func (lu *LocalUpgrader) setupVersionDirectories(_ context.Context) error {
 			continue
 		}
 
-		// Copy file
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return fmt.Errorf("failed to copy %s: %w", binary, err)
-		}
-
-		// Make executable
-		if err := os.Chmod(dstPath, 0755); err != nil {
-			return fmt.Errorf("failed to make %s executable: %w", binary, err)
+		// UPGSAFE-010: never truncate a binary a running node may be executing
+		if _, err := installBinary(srcPath, dstPath); err != nil {
+			return fmt.Errorf("failed to install %s: %w", binary, err)
 		}
 	}
 
 	fmt.Printf("  ✓ Version directories created\n")
 	return nil
-}
-
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = sourceFile.Close() }()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = destFile.Close() }()
-
-	if _, err := destFile.ReadFrom(sourceFile); err != nil {
-		return err
-	}
-
-	return destFile.Sync()
 }
 
 // regenerateSupervisorConfig generates new supervisor config for the new version
@@ -804,76 +786,73 @@ func (lu *LocalUpgrader) stopOldSupervisor(ctx context.Context) error {
 
 // upgradeReplicaSet upgrades a replica set following best practices
 // [UPG-005] Replica set member upgrade (secondaries first, then primary)
-func (lu *LocalUpgrader) upgradeReplicaSet(ctx context.Context, nodes []topology.MongodNode) error {
+func (lu *LocalUpgrader) upgradeReplicaSet(ctx context.Context, nodes []topology.MongodNode, isConfigServer bool) error {
 	if len(nodes) == 0 {
 		return fmt.Errorf("no nodes to upgrade")
 	}
 
-	// Get replica set name
 	rsName := nodes[0].ReplicaSet
-	var allHosts []string
+	allHosts := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		allHosts = append(allHosts, fmt.Sprintf("%s:%d", node.Host, node.Port))
 	}
 
-	fmt.Printf("\n  Detecting node roles in replica set '%s'...\n", rsName)
+	fmt.Printf("\n  Upgrading replica set '%s' one member at a time (secondaries first)...\n", rsName)
 
-	// Detect roles for all nodes
-	type nodeWithRole struct {
-		node topology.MongodNode
-		role string
+	// UPGSAFE-005: roles and health are re-read before every node
+	run := &replicaSetUpgrade{
+		probe:         lu.replicaSetProbe(),
+		rsName:        rsName,
+		settleTimeout: defaultSettleTimeout,
+		pollInterval:  defaultSettlePoll,
+		isDone: func(hostPort string) bool {
+			nodeState, exists := lu.state.Nodes[hostPort]
+			return exists && nodeState.Status == NodeStatusCompleted
+		},
+		upgradeNode: func(ctx context.Context, node topology.MongodNode, role string, needsStepDown bool) error {
+			return lu.upgradeReplicaSetNode(ctx, node, role, rsName, allHosts, needsStepDown, isConfigServer)
+		},
 	}
-	var nodesWithRoles []nodeWithRole
-	var primaryNode *topology.MongodNode
+	return run.execute(ctx, nodes)
+}
 
-	for _, node := range nodes {
-		hostPort := fmt.Sprintf("%s:%d", node.Host, node.Port)
-
-		// Skip if already completed
-		if nodeState, exists := lu.state.Nodes[hostPort]; exists && nodeState.Status == NodeStatusCompleted {
-			fmt.Printf("    %s already upgraded, skipping...\n", hostPort)
-			continue
-		}
-
-		role, err := DetectNodeRole(ctx, hostPort, rsName, allHosts)
-		if err != nil {
-			fmt.Printf("    ⚠️  Could not detect role for %s: %v (assuming SECONDARY)\n", hostPort, err)
-			role = "SECONDARY"
-		}
-
-		fmt.Printf("    %s - %s\n", hostPort, role)
-
-		nodesWithRoles = append(nodesWithRoles, nodeWithRole{node: node, role: role})
-
-		if role == "PRIMARY" {
-			nodeCopy := node
-			primaryNode = &nodeCopy
-		}
+// balancerGuard builds the guard that pauses and restores the balancer.
+func (lu *LocalUpgrader) balancerGuard() *balancerGuard {
+	return &balancerGuard{
+		control: mongosBalancerControl{connect: lu.connectToCluster},
+		state:   lu.state,
+		save:    func() error { return lu.config.StateManager.SaveState(lu.state) },
+		runHook: func(ctx context.Context, hook HookType) error {
+			return lu.config.HookRegistry.Execute(ctx, HookContext{
+				HookType:    hook,
+				ClusterName: lu.config.ClusterName,
+				FromVersion: lu.config.FromVersion,
+				ToVersion:   lu.config.ToVersion,
+			})
+		},
 	}
+}
 
-	// Upgrade secondaries first
-	fmt.Printf("\n  Phase 1: Upgrading SECONDARY nodes\n")
-	for _, nwr := range nodesWithRoles {
-		if nwr.role != "PRIMARY" {
-			if err := lu.upgradeReplicaSetNode(ctx, nwr.node, nwr.role, rsName, allHosts, false); err != nil {
-				return err
-			}
-		}
+// PauseBalancer stops the balancer before a sharded upgrade. UPGSAFE-008
+func (lu *LocalUpgrader) PauseBalancer(ctx context.Context) error {
+	return lu.balancerGuard().pause(ctx)
+}
+
+// RestoreBalancer starts the balancer again if the upgrade stopped it. UPGSAFE-008
+func (lu *LocalUpgrader) RestoreBalancer(ctx context.Context) error {
+	return lu.balancerGuard().restore(ctx)
+}
+
+// replicaSetProbe returns the probe used to read and change replica set state.
+func (lu *LocalUpgrader) replicaSetProbe() replicaSetProbe {
+	if lu.rsProbe != nil {
+		return lu.rsProbe
 	}
-
-	// Step down primary and upgrade it
-	if primaryNode != nil {
-		fmt.Printf("\n  Phase 2: Upgrading PRIMARY node\n")
-		if err := lu.upgradeReplicaSetNode(ctx, *primaryNode, "PRIMARY", rsName, allHosts, true); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return driverReplicaSetProbe{}
 }
 
 // upgradeReplicaSetNode upgrades a single replica set node with role tracking
-func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topology.MongodNode, role string, rsName string, allHosts []string, isPrimary bool) error {
+func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topology.MongodNode, role string, rsName string, allHosts []string, isPrimary bool, isConfigServer bool) error {
 	hostPort := fmt.Sprintf("%s:%d", node.Host, node.Port)
 
 	// Skip if already completed
@@ -922,9 +901,13 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 		}
 
 		fmt.Printf("\n  Initiating primary stepdown for %s...\n", hostPort)
-		failoverEvent, err := StepDownPrimary(ctx, hostPort, rsName, allHosts)
+		failoverEvent, err := lu.replicaSetProbe().StepDown(ctx, hostPort, rsName, allHosts)
 		if err != nil {
 			return fmt.Errorf("failed to step down primary: %w", err)
+		}
+		// UPGSAFE-006: never stop a node that is still the primary
+		if err := validateFailover(failoverEvent); err != nil {
+			return err
 		}
 
 		// Record failover in state
@@ -984,8 +967,13 @@ func (lu *LocalUpgrader) upgradeReplicaSetNode(ctx context.Context, node topolog
 		return fmt.Errorf("before-secondary-upgrade hook failed: %w", err)
 	}
 
-	// Use base Upgrader's upgradeNode method (uses NodeOperations interface)
-	if err := lu.upgradeNode(ctx, node, role); err != nil {
+	// Config servers run under a different supervisor program name than shard
+	// members, so they are passed as ConfigNode.
+	var target interface{} = node
+	if isConfigServer {
+		target = topology.ConfigNode{Host: node.Host, Port: node.Port, ReplicaSet: node.ReplicaSet}
+	}
+	if err := lu.upgradeNode(ctx, target, role); err != nil {
 		return err
 	}
 
@@ -1362,54 +1350,13 @@ func (lu *LocalUpgrader) checkReplicaSetHealth(ctx context.Context, client *mong
 		return fmt.Errorf("failed to get replica set status: %w", err)
 	}
 
-	// Check that we have a primary
-	members, ok := result["members"].(bson.A)
-	if !ok {
-		return fmt.Errorf("unexpected replica set status format")
+	members, err := parseReplicaSetMembers(result)
+	if err != nil {
+		return err
 	}
 
-	hasPrimary := false
-	healthyMembers := 0
-	totalMembers := len(members)
-
-	for _, memberInterface := range members {
-		member, ok := memberInterface.(bson.M)
-		if !ok {
-			continue
-		}
-
-		state, ok := member["state"].(int32)
-		if !ok {
-			continue
-		}
-
-		health, ok := member["health"].(int32)
-		if !ok && member["health"] != nil {
-			// Try float64
-			if healthFloat, ok := member["health"].(float64); ok {
-				health = int32(healthFloat)
-			}
-		}
-
-		// State 1 = PRIMARY, 2 = SECONDARY
-		if state == 1 {
-			hasPrimary = true
-		}
-
-		if health == 1 && (state == 1 || state == 2) {
-			healthyMembers++
-		}
-	}
-
-	if !hasPrimary {
-		return fmt.Errorf("no primary found in replica set")
-	}
-
-	if healthyMembers < totalMembers {
-		return fmt.Errorf("not all members are healthy: %d/%d healthy", healthyMembers, totalMembers)
-	}
-
-	return nil
+	// UPGSAFE-001
+	return evaluateReplicaSetHealth(members)
 }
 
 // checkReplicationLag checks maximum replication lag across all secondaries

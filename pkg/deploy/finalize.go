@@ -45,7 +45,7 @@ type ClusterMetadata struct {
 	CreatedAt         time.Time          `yaml:"created_at"`
 	Status            string             `yaml:"status"`
 	Topology          *topology.Topology `yaml:"topology"`
-	DeployMode        string             `yaml:"deploy_mode"` // "local" or "remote"
+	DeployMode        string             `yaml:"deploy_mode"` // always "local"; see meta.DeployModeLocal
 	Nodes             []NodeMetadata     `yaml:"nodes"`
 	ConnectionCommand string             `yaml:"connection_command,omitempty"` // Command to connect to cluster
 
@@ -92,19 +92,14 @@ func (d *Deployer) saveMetadata(_ context.Context) error {
 	}
 
 	metadata := ClusterMetadata{
-		Name:      d.clusterName,
-		Version:   d.version,
-		Variant:   d.variant.String(),
-		BinPath:   d.binPath,
-		CreatedAt: time.Now(),
-		Status:    "running",
-		Topology:  d.topology,
-		DeployMode: func() string {
-			if d.isLocal {
-				return "local"
-			}
-			return "remote"
-		}(),
+		Name:              d.clusterName,
+		Version:           d.version,
+		Variant:           d.variant.String(),
+		BinPath:           d.binPath,
+		CreatedAt:         time.Now(),
+		Status:            "running",
+		Topology:          d.topology,
+		DeployMode:        meta.DeployModeLocal,
 		Nodes:             d.collectNodeMetadata(),
 		ConnectionCommand: connectionCommand,
 		Monitoring:        d.GetMonitoringMetadata(),
@@ -227,12 +222,7 @@ func (d *Deployer) displayClusterInfo() error {
 	fmt.Printf("MongoDB variant: %s\n", d.variant.String())
 	fmt.Printf("MongoDB version: %s\n", d.version)
 	fmt.Printf("Topology type:   %s\n", d.topology.GetTopologyType())
-	fmt.Printf("Deploy mode:     %s\n", func() string {
-		if d.isLocal {
-			return "local"
-		}
-		return "remote"
-	}())
+	fmt.Printf("Deploy mode:     %s\n", meta.DeployModeLocal)
 
 	fmt.Println("\nNodes:")
 	fmt.Println(repeatString("-", 60))

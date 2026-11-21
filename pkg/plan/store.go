@@ -12,6 +12,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/zph/mup/pkg/paths"
+
 	"github.com/oklog/ulid/v2"
 )
 
@@ -26,11 +28,11 @@ type PlanStore struct {
 // NewPlanStore creates a new plan store
 func NewPlanStore(storageDir string) (*PlanStore, error) {
 	if storageDir == "" {
-		homeDir, err := os.UserHomeDir()
+		dir, err := paths.StorageDir()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
+			return nil, err
 		}
-		storageDir = filepath.Join(homeDir, ".mup", "storage")
+		storageDir = dir
 	}
 
 	return &PlanStore{

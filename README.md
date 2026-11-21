@@ -5,12 +5,10 @@ Mup (MongoDB Utility Platform) is a cluster management tool for MongoDB, inspire
 ## Features
 
 - **Playground Mode**: Quick local MongoDB cluster for development and testing
-- **Cluster Import**: Import existing MongoDB clusters with zero data movement
 - **Rolling Operations**: Zero-downtime migrations with replica set awareness
-- **SSH-based Remote Management**: Agentless architecture using SSH
+- **Local Management**: Clusters run on the local machine under supervisord
 - **Version Flexibility**: Support multiple MongoDB versions (3.6 through 8.0)
 - **State Management**: Centralized state tracking in YAML metadata
-- **Auto-Detection**: Discover and import systemd-managed MongoDB clusters
 
 ## Installation
 
@@ -297,21 +295,29 @@ mup state checkpoints my-cluster
 
 ### Recovery from Failures
 
-If a deployment fails, resume from the last checkpoint:
+If a deployment fails, resume it. Operations that already completed are skipped:
 
 ```bash
 # Fix the issue (e.g., free up a port)
 
-# Resume from last checkpoint
-mup plan resume my-cluster
+# Resume the most recent failed or paused apply
+mup cluster resume my-cluster
 
 # Output:
-# Resuming apply state-xyz789 from checkpoint phase1-complete
+# Resuming apply state-xyz789 for cluster 'my-cluster' from phase 'deploy'...
 #
 # Phase 2/4: Deploy
 #   ✓ Started mongod processes [5s]
 # ...continues from where it left off
 ```
+
+If an interrupted run left a lock behind that mup cannot clear on its own:
+
+```bash
+mup cluster unlock my-cluster
+```
+
+> Implemented today: `mup cluster deploy --plan-only`, `mup cluster resume`, `mup cluster unlock`, `mup plan list`, `mup plan show`, and `mup lock list|show|cleanup|force-unlock`. The other `mup plan ...` subcommands (`validate`, `apply`) and the `mup state ...` commands shown above are not implemented yet.
 
 ### Future Operations (Coming Soon)
 
@@ -328,211 +334,11 @@ mup cluster reload prod-rs --rolling
 
 See [docs/specs/PLAN_APPLY_SYSTEM.md](docs/specs/PLAN_APPLY_SYSTEM.md) for complete technical details.
 
-## Import Existing Clusters
-
-Mup can import existing MongoDB clusters (especially systemd-managed remote deployments) into its management structure with minimal downtime. The import process uses symlinks for data directories (zero data movement) and performs rolling restarts with replica set awareness.
-
-### What Import Does
-
-The import command:
-1. **Discovers** MongoDB instances (auto-detect or manual specification)
-2. **Creates** mup's per-version directory structure
-3. **Symlinks** existing data directories (no data movement)
-4. **Imports** MongoDB configurations, preserving custom settings
-5. **Generates** topology.yaml for declarative cluster management
-6. **Migrates** from systemd to supervisord management
-7. **Performs** rolling restart (SECONDARY → PRIMARY pattern)
-
-### Prerequisites
-
-- Existing MongoDB cluster (standalone, replica set, or sharded)
-- SSH access (for remote imports)
-- Systemd-managed services (for auto-detection)
-- Sufficient disk space for binaries and logs
-
-### Auto-Detect Mode (Recommended)
-
-Import a local systemd-managed cluster by auto-detecting MongoDB processes:
-
-```bash
-# Local cluster auto-detection
-mup cluster import my-cluster --auto-detect
-
-# Remote cluster via SSH
-mup cluster import prod-rs --auto-detect --ssh-host user@mongodb-server.example.com
-```
-
-Output:
-```
-Phase 1: Discovering MongoDB instances...
-  Found 3 MongoDB instance(s), version 7.0.5 (replica set)
-  Detected systemd services: mongod-27017, mongod-27018, mongod-27019
-
-Phase 2: Creating directory structure...
-  Created: ~/.mup/storage/clusters/my-cluster/v7.0.5/
-  Symlinked data directories (no data movement)
-  Directory structure created
-
-Phase 3: Importing configurations...
-  Imported configs for 3 instances
-  Preserved custom settings: security, TLS, setParameter
-  Configurations imported
-
-Phase 3.5: Generating topology.yaml...
-  Topology file generated
-
-Phase 4: Managing systemd services...
-  Rolling restart: SECONDARY → SECONDARY → PRIMARY
-  Disabling systemd service: mongod-27017
-  Disabling systemd service: mongod-27018
-  Stepping down PRIMARY: localhost:27019
-  Disabling systemd service: mongod-27019
-  Disabled 3 systemd service(s)
-
-✓ Import successful!
-  Cluster: my-cluster
-  Version: 7.0.5 (mongo)
-  Nodes imported: 3
-  Services disabled: mongod-27017, mongod-27018, mongod-27019
-
-Your cluster is now managed by mup. Use 'mup cluster status my-cluster' to check status.
-```
-
-### Manual Mode
-
-Import with explicit configuration when auto-detection isn't available:
-
-```bash
-# Local import with manual specification
-mup cluster import my-cluster \
-  --config /etc/mongod.conf \
-  --data-dir /var/lib/mongodb \
-  --port 27017
-
-# Remote import with manual specification
-mup cluster import prod-standalone \
-  --config /etc/mongod.conf \
-  --data-dir /var/lib/mongodb \
-  --port 27017 \
-  --ssh-host user@mongodb-server.example.com
-```
-
-### Dry Run Mode
-
-Preview import actions without making changes:
-
-```bash
-mup cluster import my-cluster --auto-detect --dry-run
-```
-
-This shows what would be done without actually:
-- Creating directories
-- Disabling systemd services
-- Restarting MongoDB processes
-
-### Import Options
-
-```bash
-mup cluster import <cluster-name> [flags]
-
-Flags:
-  --auto-detect              Auto-detect MongoDB processes
-  --config string            Path to mongod.conf (manual mode)
-  --data-dir string          MongoDB data directory (manual mode)
-  --port int                 MongoDB port (manual mode)
-  --host string              MongoDB host (default: localhost)
-  --ssh-host string          Remote host via SSH (user@host)
-  --dry-run                  Preview without making changes
-  --skip-restart             Import structure only, don't restart processes
-  --keep-systemd-files       Don't remove systemd unit files
-```
-
-### Rolling Restart Pattern
-
-For replica sets, import uses a SECONDARY-first pattern to minimize downtime:
-
-1. **Identify members**: Query replica set status to find PRIMARY and SECONDARYs
-2. **Migrate SECONDARYs**:
-   - Stop systemd service for SECONDARY
-   - Start under supervisord
-   - Verify health and replication lag < 30s
-   - Repeat for all SECONDARYs
-3. **Step down PRIMARY**: Use `rs.stepDown()` to elect new PRIMARY
-4. **Migrate former PRIMARY**: Now a SECONDARY, safe to restart
-
-### Data Safety
-
-Import uses **symlinks** instead of copying data:
-
-```
-~/.mup/storage/clusters/my-cluster/
-├── data/
-│   ├── localhost-27017 -> /var/lib/mongodb-27017  # Symlink to existing data
-│   ├── localhost-27018 -> /var/lib/mongodb-27018
-│   └── localhost-27019 -> /var/lib/mongodb-27019
-└── v7.0.5/
-    ├── bin/          # MongoDB binaries
-    ├── conf/         # Mup-managed configs
-    └── logs/         # Process logs
-```
-
-**Benefits**:
-- Zero data movement (no disk I/O)
-- Original data location preserved
-- Instant rollback capability
-
-### Rollback
-
-If import fails, systemd services are automatically re-enabled. For manual rollback:
-
-```bash
-# Re-enable systemd services
-sudo systemctl enable mongod-27017
-sudo systemctl enable mongod-27018
-sudo systemctl enable mongod-27019
-
-# Start services
-sudo systemctl start mongod-27017
-sudo systemctl start mongod-27018
-sudo systemctl start mongod-27019
-```
-
-### After Import
-
-Once imported, manage your cluster with mup commands:
-
-```bash
-# Check cluster status
-mup cluster status my-cluster
-
-# View the generated topology
-cat ~/.mup/storage/clusters/my-cluster/topology.yaml
-
-# View logs
-tail -f ~/.mup/storage/clusters/my-cluster/current/logs/mongod-27017.log
-
-# Upgrade to new version
-mup cluster upgrade my-cluster 8.0.0 --rolling
-
-# Stop cluster
-mup cluster stop my-cluster
-
-# Start cluster
-mup cluster start my-cluster
-```
-
-The generated `topology.yaml` provides a declarative description of your cluster, enabling future operations like scale-out, reconfiguration, and disaster recovery.
-
-### Supported Import Sources
-
-- ✅ Systemd-managed MongoDB (auto-detect)
-- ✅ Manual configuration specification
-- ✅ Local and remote (SSH) clusters
-- ✅ Standalone, replica sets, and sharded clusters
-- ✅ MongoDB 3.6 through 8.0
-- ✅ Percona Server for MongoDB
-
 ## Configuration
+
+### Storage location
+
+mup keeps clusters, cached MongoDB packages and helper binaries under `~/.mup/storage`. Set `MUP_STORAGE_DIR` to an absolute path to use a different location.
 
 Mup stores its state and configuration in:
 
@@ -593,11 +399,10 @@ mup/
 │   └── mup/              # CLI commands
 ├── pkg/
 │   ├── playground/       # Playground cluster management
-│   ├── import/           # Cluster import operations
 │   ├── cluster/          # Production cluster lifecycle (planned)
 │   ├── config/           # Configuration management (planned)
 │   ├── deploy/           # Deployment orchestration (planned)
-│   ├── executor/         # Local and SSH execution abstraction
+│   ├── executor/         # Local execution abstraction
 │   └── supervisor/       # Supervisord integration
 └── docs/                 # Design and specification documents
 ```
@@ -609,14 +414,6 @@ mup/
 - [x] Start/stop/status/connect commands
 - [x] State persistence
 - [x] Automatic mongosh connection
-
-### Phase 1.5: Cluster Import ✅
-- [x] Auto-detect existing MongoDB clusters
-- [x] Import systemd-managed deployments
-- [x] Zero-downtime rolling migration
-- [x] SSH-based remote import
-- [x] Replica set awareness (SECONDARY→PRIMARY pattern)
-- [x] Automatic rollback on failure
 
 ### Phase 2: Basic Deployment (Next)
 - [ ] Deploy standalone MongoDB instance
@@ -637,10 +434,7 @@ See [DESIGN.md](DESIGN.md) for the complete roadmap.
 | Feature | Mup | mongo-orchestration | mtools |
 |---------|-----|---------------------|--------|
 | **Playground** | ✓ | ✓ | ✓ |
-| **Import Existing Clusters** | ✓ | No | No |
-| **Production Clusters** | Import | Limited | No |
 | **State Management** | YAML | JSON API | No |
-| **Remote Management** | SSH | No | No |
 | **Rolling Operations** | ✓ | No | No |
 
 ## Contributing

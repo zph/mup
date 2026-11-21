@@ -112,6 +112,13 @@ type UpgradeState struct {
 	SkippedNodes       []string `yaml:"skipped_nodes,omitempty"`        // Nodes user chose to skip
 	UserPauseRequested bool     `yaml:"user_pause_requested,omitempty"` // User requested pause
 
+	// UpgradeFCV records the --upgrade-fcv choice so a resume keeps it. UPGSAFE-009
+	UpgradeFCV bool `yaml:"upgrade_fcv,omitempty"`
+
+	// BalancerStoppedByUpgrade records that this upgrade stopped the balancer
+	// and must start it again. UPGSAFE-008
+	BalancerStoppedByUpgrade bool `yaml:"balancer_stopped_by_upgrade,omitempty"`
+
 	// Failover tracking
 	Failovers []FailoverEvent `yaml:"failovers,omitempty"` // Track all failovers during upgrade
 

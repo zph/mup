@@ -5,9 +5,9 @@ import (
 	"os"
 )
 
-// Executor provides a unified interface for executing operations
-// either locally or remotely via SSH. This abstraction allows the same
-// deployment code to work in both local and remote scenarios.
+// Executor provides a unified interface for executing operations. This
+// abstraction lets the same deployment code run against the local machine
+// or the simulation executor.
 type Executor interface {
 	// File Operations
 	CreateDirectory(path string, mode os.FileMode) error

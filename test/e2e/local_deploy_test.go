@@ -83,7 +83,7 @@ mongod_servers:
 
 	// Wait for MongoDB to be ready
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", port)
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("MongoDB not ready: %v", err)
 	}
 
@@ -109,7 +109,7 @@ mongod_servers:
 
 	// Stop the cluster
 	t.Log("Stopping cluster")
-	stopResult := testutil.RunCommandWithEnv(t, env, "cluster", "stop", clusterName)
+	stopResult := testutil.RunCommandWithEnv(t, env, "cluster", "stop", clusterName, "--yes")
 	testutil.AssertSuccess(t, stopResult)
 
 	// Verify port is no longer in use
@@ -219,7 +219,7 @@ mongod_servers:
 
 	// Wait for primary to be ready
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", ports[0])
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("MongoDB not ready: %v", err)
 	}
 
@@ -261,7 +261,7 @@ mongod_servers:
 
 	// Stop the cluster
 	t.Log("Stopping replica set")
-	stopResult := testutil.RunCommandWithEnv(t, env, "cluster", "stop", clusterName)
+	stopResult := testutil.RunCommandWithEnv(t, env, "cluster", "stop", clusterName, "--yes")
 	testutil.AssertSuccess(t, stopResult)
 
 	// Verify all ports are released
@@ -380,7 +380,7 @@ mongod_servers:
 	// Get mongosh path to verify it exists
 	mongoshPath := filepath.Join(storageDir, "clusters", clusterName, "v7.0.0", "bin", "mongosh")
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", port)
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("MongoDB not ready: %v", err)
 	}
 

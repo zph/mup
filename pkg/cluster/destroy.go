@@ -3,78 +3,67 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/zph/mup/pkg/paths"
 )
 
-// Destroy destroys a cluster
+// Destroy stops a cluster and removes what mup created for it.
+//
+// LOCAL-001: only paths inside the cluster directory are removed. Node paths
+// recorded in metadata are never used as deletion targets because they can
+// hold raw topology values that point outside mup's storage.
 func (m *Manager) Destroy(ctx context.Context, clusterName string, keepData bool) error {
-	// Load metadata
-	metadata, err := m.metaMgr.Load(clusterName)
-	if err != nil {
+	if _, err := m.metaMgr.Load(clusterName); err != nil {
 		return err
 	}
 
 	fmt.Printf("Destroying cluster '%s'...\n", clusterName)
 
-	// Stop all nodes first
 	fmt.Println("Stopping all MongoDB processes...")
 	if err := m.Stop(ctx, clusterName, ""); err != nil {
 		fmt.Printf("Warning: failed to stop some nodes: %v\n", err)
 	}
 
-	// Remove data directories if requested
-	if !keepData && metadata.DeployMode == "local" {
-		fmt.Println("Removing data directories...")
+	clusterDir := m.metaMgr.GetClusterDir(clusterName)
 
-		// Create executors
-		executors, err := m.createExecutors(metadata)
-		if err != nil {
-			return fmt.Errorf("failed to create executors: %w", err)
+	// LOCAL-002
+	if !keepData {
+		fmt.Println("Removing cluster directory...")
+		if err := m.metaMgr.Delete(clusterName); err != nil {
+			return fmt.Errorf("failed to delete cluster directory: %w", err)
 		}
-		defer m.closeExecutors(executors)
-
-		for _, node := range metadata.Nodes {
-			exec := executors[node.Host]
-
-			// Remove data directory
-			if node.DataDir != "" {
-				if err := exec.RemoveDirectory(node.DataDir); err != nil {
-					fmt.Printf("  ! Failed to remove data directory %s: %v\n", node.DataDir, err)
-				} else {
-					fmt.Printf("  ✓ Removed %s\n", node.DataDir)
-				}
-			}
-
-			// Remove log directory
-			if err := exec.RemoveDirectory(node.LogDir); err != nil {
-				fmt.Printf("  ! Failed to remove log directory %s: %v\n", node.LogDir, err)
-			}
-
-			// Remove config directory
-			if err := exec.RemoveDirectory(node.ConfigDir); err != nil {
-				fmt.Printf("  ! Failed to remove config directory %s: %v\n", node.ConfigDir, err)
-			}
-		}
-
-		// Remove supervisor config and logs
-		clusterDir := m.metaMgr.GetClusterDir(clusterName)
-		exec := executors["localhost"] // For local deployments
-		if metadata.SupervisorConfigPath != "" {
-			_ = exec.RemoveFile(metadata.SupervisorConfigPath)
-		} else {
-			// Fallback to default location
-			_ = exec.RemoveFile(clusterDir + "/supervisor.ini")
-		}
-		_ = exec.RemoveFile(clusterDir + "/supervisor.log")
-		_ = exec.RemoveFile(clusterDir + "/supervisor.pid")
-		fmt.Println("  ✓ Removed supervisor files")
+		fmt.Printf("\n✓ Cluster '%s' destroyed\n", clusterName)
+		return nil
 	}
 
-	// Delete metadata
-	fmt.Println("Removing cluster metadata...")
-	if err := m.metaMgr.Delete(clusterName); err != nil {
-		return fmt.Errorf("failed to delete metadata: %w", err)
+	// LOCAL-003
+	dataDir := paths.NewClusterLayout(clusterDir).DataDir()
+	fmt.Println("Removing cluster files (keeping data)...")
+	if err := removeAllExcept(clusterDir, dataDir); err != nil {
+		return err
 	}
 
-	fmt.Printf("\n✓ Cluster '%s' destroyed\n", clusterName)
+	fmt.Printf("\n✓ Cluster '%s' destroyed; data kept at %s\n", clusterName, dataDir)
+	return nil
+}
+
+// removeAllExcept removes every entry directly under dir other than keep.
+func removeAllExcept(dir, keep string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", dir, err)
+	}
+
+	for _, entry := range entries {
+		entryPath := filepath.Join(dir, entry.Name())
+		if entryPath == keep {
+			continue
+		}
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", entryPath, err)
+		}
+	}
 	return nil
 }

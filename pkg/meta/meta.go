@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zph/mup/pkg/paths"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/zph/mup/pkg/topology"
@@ -21,7 +23,7 @@ type ClusterMetadata struct {
 	CreatedAt         time.Time          `yaml:"created_at"`
 	Status            string             `yaml:"status"`
 	Topology          *topology.Topology `yaml:"topology"`
-	DeployMode        string             `yaml:"deploy_mode"` // "local" or "remote"
+	DeployMode        string             `yaml:"deploy_mode"` // always "local"; see meta.DeployModeLocal
 	Nodes             []NodeMetadata     `yaml:"nodes"`
 	ConnectionCommand string             `yaml:"connection_command,omitempty"` // Command to connect to cluster
 
@@ -106,6 +108,10 @@ type NodeMetadata struct {
 	SupervisorConfigFile  string `yaml:"supervisor_config_file,omitempty"`  // Path to node's supervisor config
 }
 
+// DeployModeLocal is the only deploy mode: every node runs on this machine.
+// The field is kept in metadata so existing cluster files stay readable.
+const DeployModeLocal = "local"
+
 // Manager manages cluster metadata
 type Manager struct {
 	baseDir string
@@ -113,12 +119,10 @@ type Manager struct {
 
 // NewManager creates a new metadata manager
 func NewManager() (*Manager, error) {
-	homeDir, err := os.UserHomeDir()
+	baseDir, err := paths.ClustersDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, err
 	}
-
-	baseDir := filepath.Join(homeDir, ".mup", "storage", "clusters")
 	return &Manager{baseDir: baseDir}, nil
 }
 

@@ -307,73 +307,11 @@ providers:
 	return nil
 }
 
-// copyDashboards copies dashboard JSON files to the Grafana dashboards directory
+// copyDashboards installs the dashboards embedded in the binary into the
+// Grafana dashboards directory.
 func (m *Manager) copyDashboards() error {
-	// Get the path to the dashboards source directory
-	// In production, dashboards are embedded in the binary via //go:embed
-	// For now, we'll copy from the source directory
-	dashboardsSourceDir := filepath.Join(getRootDir(), "pkg", "monitoring", "dashboards")
-	dashboardsDestDir := m.grafana.GetDashboardsDir()
-
-	// Ensure destination directory exists
-	if err := os.MkdirAll(dashboardsDestDir, 0755); err != nil {
-		return fmt.Errorf("failed to create dashboards directory: %w", err)
-	}
-
-	// List of dashboard files to copy
-	dashboards := []string{
-		"mongodb-overview.json",
-		"mongodb-wiredtiger.json",
-		"mongodb-sharding.json",
-		"mongodb-replication.json",
-		"system-overview.json",
-	}
-
-	for _, dashboard := range dashboards {
-		srcPath := filepath.Join(dashboardsSourceDir, dashboard)
-		dstPath := filepath.Join(dashboardsDestDir, dashboard)
-
-		// Check if source file exists
-		if _, err := os.Stat(srcPath); err != nil {
-			// File doesn't exist, skip (might be in embedded FS in production)
-			continue
-		}
-
-		// Read source file
-		data, err := os.ReadFile(srcPath)
-		if err != nil {
-			return fmt.Errorf("failed to read dashboard %s: %w", dashboard, err)
-		}
-
-		// Write to destination
-		if err := os.WriteFile(dstPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write dashboard %s: %w", dashboard, err)
-		}
-	}
-
-	return nil
-}
-
-// getRootDir attempts to find the project root directory
-func getRootDir() string {
-	// Try to find go.mod by walking up from current directory
-	dir, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached root without finding go.mod
-			return "."
-		}
-		dir = parent
-	}
+	_, err := writeDashboards(m.grafana.GetDashboardsDir())
+	return err
 }
 
 // StartClusterMonitoring starts monitoring for a specific cluster
@@ -437,7 +375,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 		vmStatus, err := m.supervisorMgr.GetProcessStatus(VictoriaMetricsProgramName)
 		if err == nil {
-			status.VictoriaMetrics.Running = vmStatus.State == "Running"
+			status.VictoriaMetrics.Running = vmStatus.ProcessState().IsRunning()
 			status.VictoriaMetrics.PID = vmStatus.PID
 			status.VictoriaMetrics.Uptime = time.Duration(vmStatus.Uptime) * time.Second
 		} else {
@@ -449,7 +387,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 		grafanaStatus, err := m.supervisorMgr.GetProcessStatus(GrafanaProgramName)
 		if err == nil {
-			status.Grafana.Running = grafanaStatus.State == "Running"
+			status.Grafana.Running = grafanaStatus.ProcessState().IsRunning()
 			status.Grafana.PID = grafanaStatus.PID
 			status.Grafana.Uptime = time.Duration(grafanaStatus.Uptime) * time.Second
 		} else {
@@ -472,7 +410,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 			if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 				procStatus, err := m.supervisorMgr.GetProcessStatus(programName)
 				if err == nil {
-					expHealth.Running = procStatus.State == "Running"
+					expHealth.Running = procStatus.ProcessState().IsRunning()
 					expHealth.PID = procStatus.PID
 				} else {
 					// Fallback to port check
@@ -499,7 +437,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 			if m.supervisorMgr != nil && m.supervisorMgr.IsRunning() {
 				procStatus, err := m.supervisorMgr.GetProcessStatus(programName)
 				if err == nil {
-					expHealth.Running = procStatus.State == "Running"
+					expHealth.Running = procStatus.ProcessState().IsRunning()
 					expHealth.PID = procStatus.PID
 				} else {
 					// Fallback to port check

@@ -185,10 +185,7 @@ func (ops *LocalNodeOperations) readLogsAndFail(nodeID string) error {
 // PrepareBinaries downloads and prepares MongoDB binaries for the target version
 func (ops *LocalNodeOperations) PrepareBinaries(ctx context.Context, version string, variant deploy.Variant) error {
 	// Parse platform
-	platform := deploy.Platform{
-		OS:   "darwin", // TODO: Get from runtime
-		Arch: "arm64",  // TODO: Get from runtime
-	}
+	platform := deploy.GetCurrentPlatform()
 
 	// Download binaries to cache
 	binPath, err := ops.binaryMgr.GetBinPathWithVariant(version, variant, platform)
@@ -217,18 +214,20 @@ func (ops *LocalNodeOperations) UpdateNodeConfig(ctx context.Context, nodeID str
 // VerifyNodeVersion verifies that a node is running the expected MongoDB version
 // TODO: Connect to MongoDB and verify version via buildInfo command
 func (ops *LocalNodeOperations) VerifyNodeVersion(ctx context.Context, nodeID string, expectedVersion string) error {
-	// For now, just check that the process is running
-	// Full implementation would connect via MongoDB driver and run buildInfo
 	status, err := ops.GetNodeStatus(ctx, nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to get node status: %w", err)
 	}
-
 	if !status.IsHealthy {
 		return fmt.Errorf("node is not healthy (state: %s)", status.State)
 	}
 
-	return nil
+	// UPGSAFE-007: a running process is not proof of the new binary; ask the server
+	port, err := portFromNodeID(nodeID)
+	if err != nil {
+		return err
+	}
+	return waitForServerVersion(ctx, driverVersionLookup(port), expectedVersion, versionVerifyTimeout, versionVerifyPoll)
 }
 
 // SetupVersionEnvironment prepares the environment for the new version

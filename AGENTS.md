@@ -6,7 +6,7 @@ This file provides core design principles and architectural decisions for mup (M
 
 **All operations that mutate cluster state MUST implement plan/apply semantics.**
 
-This applies to: `deploy`, `upgrade`, `import`, and future `scale-out`/`scale-in` operations.
+This applies to: `deploy`, `upgrade`, and future `scale-out`/`scale-in` operations.
 
 The pattern:
 1. **Plan**: Generate an immutable execution plan by simulating the desired state
@@ -16,6 +16,8 @@ This ensures idempotency, safety, and auditability. Inspired by Terraform/Kubern
 
 ## Inheritance from TiUP
 
+mup is local-only: clusters run on this machine, there is no SSH executor, and every path is derived from the cluster directory. The TiUP reference below applies to topology file shape, not to remote path layout.
+
 1. When deciding configuration behavior, especially deploy_dir, you SHOULD follow
 https://docs.pingcap.com/tidb/stable/tiup-cluster-topology-reference/ for existing configurations.
 Especially about location
@@ -23,9 +25,10 @@ Especially about location
 ## Architecture
 
 ### State Management
-- **Playground**: `~/.mup/playground/` (JSON state, uses mongo-scaffold)
+- **Playground**: a regular cluster named `playground` under `~/.mup/storage/clusters/playground/`, deployed by `pkg/deploy`
 - **Production**: `~/.mup/storage/clusters/<name>/` (YAML metadata)
 - **Binaries**: `~/.mup/storage/packages/` (versioned cache)
+- **Storage root**: `MUP_STORAGE_DIR` overrides `~/.mup/storage` (resolved in `pkg/paths/storage.go`; never build the path by hand)
 
 ### Package Structure
 - `cmd/mup/` - CLI commands (cobra)
@@ -33,7 +36,7 @@ Especially about location
 - `pkg/deploy/` - Deployment phases (prepare/deploy/initialize/finalize)
 - `pkg/plan/` - Plan generation and validation
 - `pkg/cluster/` - Cluster lifecycle operations
-- `pkg/executor/` - Execution abstraction (local/SSH)
+- `pkg/executor/` - Execution abstraction (local; simulation in `pkg/simulation/`)
 - `pkg/template/` - Version-aware config templates
 - `pkg/meta/` - Cluster metadata management
 
@@ -53,6 +56,8 @@ Especially about location
 ### Architecture & Design
 - `docs/DESIGN.md` - Comprehensive architectural design and technical decisions
 - `docs/IMPLEMENTATION.md` - Implementation details and patterns
+- `docs/specs/upgrade-safety-requirements.md` - Upgrade safety gates (health, ordering, balancer, resume)
+- `docs/specs/local-only-safety-requirements.md` - Local-only destroy, deploy validation and simulation requirements
 - `docs/specs/PLAN_APPLY_SYSTEM.md` - Plan/apply system specification
 
 ### Feature Documentation
@@ -62,17 +67,14 @@ Especially about location
 - `docs/MONITORING_DESIGN.md` - Monitoring architecture
 - `docs/MONITORING_GUIDE.md` - Monitoring implementation guide
 - `docs/PLAYGROUND_DESIGN.md` - Playground feature design
-- `docs/specs/cluster-import-requirements.md` - Cluster import requirements
 
 ### Implementation Plans
 - `docs/TODO.md` - Implementation roadmap and phase breakdown
 - `docs/DEPLOY_PLAN.md` - Deployment system plan
-- `docs/SSHExecutor_PLAN.md` - SSH executor implementation plan
 - `docs/SUPERVISORD_PLAN.md` - Supervisord integration plan
 - `docs/SUPERVISORD_INTEGRATION_PROGRESS.md` - Supervisord integration progress tracking
 - `docs/SUPERVISORD_SUMMARY.md` - Supervisord integration summary
 - `docs/TEMPLATE_PLAN.md` - Template system plan
-- `docs/TESTING_SSH.md` - SSH testing documentation
 
 ### Reference & Support
 - `docs/MONGODB_UPGRADE_REFERENCE.md` - MongoDB version upgrade reference
@@ -85,9 +87,7 @@ Especially about location
 - `pkg/plan/` - Plan generation (`plan.go`, `planner.go`, `validator.go`)
 - `pkg/deploy/` - Deployment phases (`deployer.go`, `deploy.go`, `prepare.go`, `initialize.go`, `finalize.go`, `planner.go`)
 - `pkg/upgrade/` - Upgrade operations
-- `pkg/import/` - Cluster import operations
 - `pkg/operation/` - Operation execution handlers
 
 ## Key Dependencies
 - `github.com/spf13/cobra` - CLI framework
-- `github.com/zph/mongo-scaffold` - Playground cluster orchestration

@@ -3,8 +3,8 @@ package operation
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
+
+	"github.com/zph/mup/pkg/paths"
 
 	"github.com/zph/mup/pkg/apply"
 	"github.com/zph/mup/pkg/executor"
@@ -42,10 +42,8 @@ func NewExecutor(executors map[string]executor.Executor) *Executor {
 // NewExecutorWithStorage creates a new operation executor with custom storage directory
 func NewExecutorWithStorage(executors map[string]executor.Executor, storageDir string) *Executor {
 	if storageDir == "" {
-		// Default to ~/.mup/storage
-		homeDir, err := os.UserHomeDir()
-		if err == nil {
-			storageDir = filepath.Join(homeDir, ".mup", "storage")
+		if dir, err := paths.StorageDir(); err == nil {
+			storageDir = dir
 		}
 	}
 

@@ -287,6 +287,22 @@ func (s *ApplyState) logUnsafe(level, phase, operation, message string) {
 	s.UpdatedAt = time.Now()
 }
 
+// IsOperationCompleted reports whether an operation finished successfully.
+func (s *ApplyState) IsOperationCompleted(operationID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	op, ok := s.OperationStates[operationID]
+	return ok && op.Status == StatusCompleted
+}
+
+// IsPhaseCompleted reports whether a phase finished successfully.
+func (s *ApplyState) IsPhaseCompleted(phaseName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	phase, ok := s.PhaseStates[phaseName]
+	return ok && phase.Status == StatusCompleted
+}
+
 // IsComplete returns whether the apply is complete
 func (s *ApplyState) IsComplete() bool {
 	return s.Status == StatusCompleted || s.Status == StatusFailed || s.Status == StatusRolledBack

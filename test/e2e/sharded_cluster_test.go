@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 package e2e
@@ -145,7 +146,7 @@ mongos_servers:
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", mongosPort)
 
 	t.Log("Waiting for mongos to be ready")
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("Mongos not ready: %v", err)
 	}
 
@@ -236,7 +237,7 @@ mongos_servers:
 
 	// Start cluster again
 	t.Log("Starting cluster")
-	startResult := testutil.RunCommandWithEnv(t, env, "cluster", "start", clusterName, "--yes")
+	startResult := testutil.RunCommandWithEnv(t, env, "cluster", "start", clusterName)
 	testutil.AssertSuccess(t, startResult)
 
 	// Wait for mongos to be available again
@@ -245,7 +246,7 @@ mongos_servers:
 	}
 
 	// Wait for mongos to be ready
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("Mongos not ready after restart: %v", err)
 	}
 
@@ -337,7 +338,7 @@ mongos_servers:
 	mongoshPath := filepath.Join(storageDir, "clusters", clusterName, "v7.0.0", "bin", "mongosh")
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", ports[2])
 
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("Mongos not ready: %v", err)
 	}
 
@@ -435,7 +436,7 @@ config_servers:
 	connectionString := fmt.Sprintf("mongodb://localhost:%d", ports[0])
 
 	t.Log("Waiting for config server to be ready")
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("Config server not ready: %v", err)
 	}
 
@@ -451,10 +452,14 @@ config_servers:
 		t.Fatalf("Failed to query replica set status: %v", err)
 	}
 
-	// Verify we have 3 members
-	memberCount := strings.Count(rsStatusOutput, `"name"`)
-	if memberCount != 3 {
-		t.Errorf("Expected 3 replica set members, got output suggesting %d: %s", memberCount, rsStatusOutput)
+	// Verify we have 3 members. Ask the server for the count rather than
+	// counting keys in mongosh's printed output, whose format is not JSON.
+	memberCountOutput, err := testutil.QueryMongo(t, mongoshPath, connectionString, "rs.status().members.length")
+	if err != nil {
+		t.Fatalf("Failed to query replica set member count: %v", err)
+	}
+	if got := strings.TrimSpace(memberCountOutput); got != "3" {
+		t.Errorf("Expected 3 replica set members, got %q", got)
 	}
 
 	// Verify replica set name is configRS
@@ -511,7 +516,7 @@ config_servers:
 
 	// Start cluster again
 	t.Log("Starting cluster")
-	startResult := testutil.RunCommandWithEnv(t, env, "cluster", "start", clusterName, "--yes")
+	startResult := testutil.RunCommandWithEnv(t, env, "cluster", "start", clusterName)
 	testutil.AssertSuccess(t, startResult)
 
 	// Wait for first config server to be available again
@@ -520,7 +525,7 @@ config_servers:
 	}
 
 	// Wait for config server to be ready
-	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, 30*time.Second); err != nil {
+	if err := testutil.WaitForMongoReady(t, mongoshPath, connectionString, testutil.MongoReadyTimeout); err != nil {
 		t.Fatalf("Config server not ready after restart: %v", err)
 	}
 

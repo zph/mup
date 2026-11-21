@@ -1,8 +1,10 @@
+//go:build e2e
 // +build e2e
 
 package e2e
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,27 +17,32 @@ func TestDeployPlanOnly(t *testing.T) {
 	// Create temp directory for test
 	tmpDir := testutil.TempDir(t)
 
+	ports, err := testutil.FindAvailablePorts(planTestBasePort, 3)
+	if err != nil {
+		t.Fatalf("Failed to find available ports: %v", err)
+	}
+
 	// Create a simple topology file
-	topologyContent := `global:
+	topologyContent := fmt.Sprintf(`global:
   user: testuser
-  deploy_dir: ` + tmpDir + `/deploy
-  data_dir: ` + tmpDir + `/data
+  deploy_dir: %s/deploy
+  data_dir: %s/data
 
 mongod_servers:
   - host: localhost
-    port: 27017
+    port: %d
     replica_set: rs0
   - host: localhost
-    port: 27018
+    port: %d
     replica_set: rs0
   - host: localhost
-    port: 27019
+    port: %d
     replica_set: rs0
-`
+`, tmpDir, tmpDir, ports[0], ports[1], ports[2])
 	topologyFile := testutil.WriteFile(t, tmpDir, "topology.yaml", topologyContent)
 
-	// Run deploy with --plan-only flag
-	result := testutil.RunCommand(t,
+	// Run deploy with --plan-only flag, isolated from the real storage directory
+	result := testutil.RunCommandWithEnv(t, isolatedStorageEnv(tmpDir),
 		"cluster", "deploy",
 		"test-e2e-cluster",
 		topologyFile,
@@ -58,9 +65,9 @@ mongod_servers:
 // TestDeployValidation verifies deploy command validation
 func TestDeployValidation(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
-		shouldFail  bool
+		name          string
+		args          []string
+		shouldFail    bool
 		errorContains string
 	}{
 		{
@@ -79,7 +86,7 @@ func TestDeployValidation(t *testing.T) {
 			name:          "missing cluster name",
 			args:          []string{"cluster", "deploy", "--version", "7.0.0"},
 			shouldFail:    true,
-			errorContains: "",  // General usage error
+			errorContains: "", // General usage error
 		},
 		{
 			name:          "invalid topology file path",
@@ -114,16 +121,21 @@ func TestPlanGeneration(t *testing.T) {
 	// Create temp directory for test
 	tmpDir := testutil.TempDir(t)
 
+	ports, err := testutil.FindAvailablePorts(planTestBasePort, 1)
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+
 	// Create topology file
-	topologyContent := `global:
+	topologyContent := fmt.Sprintf(`global:
   user: testuser
-  deploy_dir: ` + tmpDir + `/deploy
-  data_dir: ` + tmpDir + `/data
+  deploy_dir: %s/deploy
+  data_dir: %s/data
 
 mongod_servers:
   - host: localhost
-    port: 27017
-`
+    port: %d
+`, tmpDir, tmpDir, ports[0])
 	topologyFile := testutil.WriteFile(t, tmpDir, "topology.yaml", topologyContent)
 
 	// Set custom storage directory
@@ -191,8 +203,8 @@ func TestFixtureTopologies(t *testing.T) {
 			// Get fixture path
 			fixturePath := filepath.Join("fixtures", tt.fixture)
 
-			// Run in plan-only mode
-			result := testutil.RunCommand(t,
+			// Run in plan-only mode, isolated from the real storage directory
+			result := testutil.RunCommandWithEnv(t, isolatedStorageEnv(testutil.TempDir(t)),
 				"cluster", "deploy",
 				tt.clusterName,
 				fixturePath,
@@ -207,4 +219,13 @@ func TestFixtureTopologies(t *testing.T) {
 			testutil.AssertContains(t, result, tt.clusterName)
 		})
 	}
+}
+
+// planTestBasePort is where plan-only tests start looking for free ports; it
+// is well away from MongoDB's default 27017, which is often already in use.
+const planTestBasePort = 43000
+
+// isolatedStorageEnv points mup at a storage directory under dir.
+func isolatedStorageEnv(dir string) map[string]string {
+	return map[string]string{"MUP_STORAGE_DIR": filepath.Join(dir, "storage")}
 }

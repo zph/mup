@@ -29,6 +29,14 @@ func WaitForPort(t *testing.T, host string, port int, timeout time.Duration) err
 	return fmt.Errorf("timeout waiting for port %d on %s", port, host)
 }
 
+// MongoReadyTimeout is how long tests wait for a deployed node to answer
+// mongosh. It is a ceiling on waiting for an event, not an expected duration.
+const MongoReadyTimeout = 2 * time.Minute
+
+// mongoshAttemptTimeout bounds one mongosh invocation. The first launch of a
+// freshly copied mongosh binary can take several seconds on a busy machine.
+const mongoshAttemptTimeout = 20 * time.Second
+
 // WaitForMongoReady waits for MongoDB to be ready to accept connections
 func WaitForMongoReady(t *testing.T, mongoshPath, connectionString string, timeout time.Duration) error {
 	t.Helper()
@@ -36,7 +44,7 @@ func WaitForMongoReady(t *testing.T, mongoshPath, connectionString string, timeo
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), mongoshAttemptTimeout)
 		cmd := exec.CommandContext(ctx, mongoshPath,
 			connectionString,
 			"--quiet",
@@ -122,11 +130,12 @@ func CleanupCluster(t *testing.T, clusterName string) {
 	t.Helper()
 
 	// Try to stop the cluster (ignore errors if already stopped)
-	stopResult := RunCommand(t, "cluster", "stop", clusterName, "--yes")
+	env := ClusterEnv(clusterName)
+	stopResult := RunCommandWithEnv(t, env, "cluster", "stop", clusterName, "--yes")
 	t.Logf("Stop cluster result (exit %d): %s", stopResult.ExitCode, stopResult.Stdout)
 
 	// Try to destroy the cluster (ignore errors if doesn't exist)
-	destroyResult := RunCommand(t, "cluster", "destroy", clusterName, "--yes")
+	destroyResult := RunCommandWithEnv(t, env, "cluster", "destroy", clusterName, "--yes")
 	t.Logf("Destroy cluster result (exit %d): %s", destroyResult.ExitCode, destroyResult.Stdout)
 }
 

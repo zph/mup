@@ -59,7 +59,7 @@ func (m *Manager) GetTemplate(nodeType string, mongoVersion string) (*template.T
 // supportsJournalEnabled checks if the MongoDB version supports storage.journal.enabled
 // This option was removed in MongoDB 6.1+
 func (m *Manager) supportsJournalEnabled(mongoVersion string) bool {
-	v, err := version.NewVersion(mongoVersion)
+	v, err := parseCoreVersion(mongoVersion)
 	if err != nil {
 		// If version parsing fails, assume it's a newer version that doesn't support it
 		return false
@@ -76,7 +76,7 @@ func (m *Manager) supportsJournalEnabled(mongoVersion string) bool {
 
 // selectTemplateVersion maps MongoDB version to template version
 func (m *Manager) selectTemplateVersion(mongoVersion string) string {
-	v, err := version.NewVersion(mongoVersion)
+	v, err := parseCoreVersion(mongoVersion)
 	if err != nil {
 		// Default to latest if version parsing fails
 		return "7.0"
@@ -106,4 +106,15 @@ func (m *Manager) selectTemplateVersion(mongoVersion string) string {
 
 	// Default to oldest supported version
 	return "3.6"
+}
+
+// parseCoreVersion parses a MongoDB version and drops any release suffix.
+// LOCAL-009: Percona versions such as "8.0.12-4" parse as prereleases, which
+// never satisfy plain constraints, so only the X.Y.Z core is compared.
+func parseCoreVersion(mongoVersion string) (*version.Version, error) {
+	v, err := version.NewVersion(mongoVersion)
+	if err != nil {
+		return nil, err
+	}
+	return v.Core(), nil
 }

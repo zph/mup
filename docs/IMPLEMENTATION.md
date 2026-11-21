@@ -331,7 +331,6 @@ type PathResolver interface {
 
 **Implementations**:
 - `LocalPathResolver` (REQ-PM-002): For local/playground deployments, resolves all paths relative to `~/.mup/storage/clusters/<name>/`
-- `RemotePathResolver` (REQ-PM-003): For SSH deployments, implements TiUP path conventions
 
 **2. ClusterLayout** (REQ-PM-009 to REQ-PM-015)
 
@@ -359,15 +358,9 @@ nextLink := layout.NextLink()            // ~/.mup/.../next  (during upgrade)
 previousLink := layout.PreviousLink()    // ~/.mup/.../previous (for rollback)
 ```
 
-**3. TiUP Compliance** (REQ-PM-004 to REQ-PM-008)
+**3. TiUP Compliance** (REQ-PM-003 to REQ-PM-008) — withdrawn
 
-The RemotePathResolver implements TiUP path conventions as specified in [TiUP documentation](https://docs.pingcap.com/tidb/stable/tiup-cluster-topology-reference/):
-
-- **Absolute paths** at instance level override all defaults (REQ-PM-004)
-- **Relative paths** nest within `/home/<user>/<global>/<instance>` (REQ-PM-005)
-- Missing instance values **cascade** from global config (REQ-PM-006)
-- Relative `data_dir` nests within `deploy_dir` (REQ-PM-007)
-- Relative `log_dir` nests within `deploy_dir` (REQ-PM-008)
+`RemotePathResolver`, which implemented TiUP path conventions for remote hosts, was removed on 2026-11-20 along with remote deployment. Local clusters derive every path from the cluster directory.
 
 **4. Test Simulation Harness** (REQ-PM-023)
 
@@ -401,7 +394,6 @@ Tests execute in <100ms, validating path resolution logic independently from act
 
 - ✅ **pkg/deploy**: Migrated to use PathResolver and ClusterLayout (REQ-PM-022)
 - 🔄 **pkg/upgrade**: Planned migration to use PathResolver and ClusterLayout
-- 🔄 **pkg/import**: Planned migration to use PathResolver and ClusterLayout
 
 #### Files
 
@@ -413,167 +405,54 @@ Tests execute in <100ms, validating path resolution logic independently from act
 - `pkg/paths/tiup_compliance_test.go` - TiUP convention compliance tests (REQ-PM-026)
 - `docs/specs/path-management-requirements.md` - EARS requirements specification
 
-## Import Command
+## Local-Only Safety (2026-11-20)
 
-**Status**: ✅ **COMPLETE** - Ready for use!
+Spec: `docs/specs/local-only-safety-requirements.md` (LOCAL-001 to LOCAL-008).
 
-The `mup cluster import` command brings existing MongoDB clusters (especially systemd-managed remote deployments) into mup's management with the per-version folder layout, using rolling restarts with replica set awareness to minimize downtime.
+- ✅ **Destroy** (`pkg/cluster/destroy.go`) - LOCAL-001 to LOCAL-003. Destroy only removes paths inside the cluster directory; `--keep-data` preserves `data/`.
+- ✅ **Metadata paths** (`pkg/operation/handlers.go` `SaveMetadataHandler`) - LOCAL-004. Node paths are resolved through `paths.LocalPathResolver`.
+- ✅ **Remote rejection and validation** (`pkg/deploy/planner.go`, `pkg/topology/topology.go`) - LOCAL-005 to LOCAL-007. `GeneratePlan` rejects non-local hosts and calls `Topology.Validate()` after port allocation.
+- ✅ **Simulation purity** (`pkg/operation/simulation.go`, `cmd/mup/cluster.go` `runSimulatedDeploy`) - LOCAL-008. Handlers with side effects outside the `Executor` interface short-circuit under simulation; the CLI skips plan save and locking and keeps apply state in a temp directory.
+- ✅ **Platform detection** - download and upgrade paths use `deploy.GetCurrentPlatform()` instead of a hardcoded `darwin/arm64`.
+- ✅ **Percona template selection** (`pkg/template/manager.go`) - LOCAL-009.
+- ✅ **Health verification** (`VerifyHealthHandler`, `pkg/deploy/planner.go`) - LOCAL-010. The planner passes every node port; an empty port list fails.
+- ✅ **Supervisor state** (`pkg/supervisor/status.go`) - LOCAL-011. `ProcessState` enum with case-insensitive parsing; used by cluster, health and monitoring.
+- ✅ **Start reporting** (`pkg/cluster/manager.go` `nodesNotRunning`) - LOCAL-012.
+- ✅ **Resume** (`pkg/apply/applier.go`, `mup cluster resume`) - LOCAL-013 to LOCAL-016. The state manager is rooted at the cluster directory, so state lives in `<cluster>/state` and plans in `<cluster>/plans`.
+- ✅ **Locking** (`pkg/apply/lock.go`, `mup cluster unlock`) - LOCAL-017 to LOCAL-019. Acquisition is serialized with `flock` on `cluster.lock.guard`; locks record hostname and PID for staleness checks.
+- ✅ **Storage location** (`pkg/paths/storage.go`) - LOCAL-020. `MUP_STORAGE_DIR` overrides `~/.mup/storage`; the e2e suite uses it to isolate itself and links the real binary caches in.
+- ✅ **Start/stop ordering** (`pkg/cluster/manager.go` `nodeGroupsForStart`) - LOCAL-021.
+- ✅ **Member options** (`pkg/operation/replica_set_members.go`, `pkg/deploy/planner.go`) - LOCAL-022.
+- ✅ **Binary cache** (`pkg/deploy/binary_cache.go`) - LOCAL-023 to LOCAL-025. Downloads verify the SHA-256 from MongoDB's `full.json`, extraction rejects path traversal, packages are staged and published by rename, and archive downloads have a 30 minute timeout. Percona and mongosh downloads have no published checksum wired in and are not verified.
+- ✅ **Supervisor port check** (`pkg/operation/simulation.go` `ensureSupervisorPortFree`) - LOCAL-026. The port is still derived from a hash of the directory; a collision is now reported instead of failing obscurely.
+- ✅ **Monitoring** (`pkg/monitoring/dashboards.go`, `pkg/cluster/health/health.go`) - LOCAL-027, LOCAL-028. Dashboards are embedded with `go:embed`; health checks read ports from metadata.
+- ✅ Removed remaining remote-mode code: `RemotePathResolver` and its TiUP compliance tests, and the `"remote"` deploy-mode branches. `meta.DeployModeLocal` is the only mode. The `isLocal` flags in `pkg/deploy` and `pkg/upgrade` are now always true and remain to be folded away.
+- ✅ **CLI** - `mup plan list|show` (`cmd/mup/plan.go`) and `mup lock list|show|cleanup|release|force-unlock` (`cmd/mup/lock.go`).
+- ✅ **E2E isolation** - e2e tests set `MUP_STORAGE_DIR`, link the developer's binary caches in, use free ports, and clean up the cluster they deployed.
+- ✅ Removed dead code: `pkg/playground`, root `test_supervisor_config.go`, the `ssh_port` topology field.
+- ⏳ Not addressed: a `start_process` operation that failed after its process came up still trips the `port_available` pre-condition on resume; the `IsComplete`/`PostHook` handler phases are still never called by the executor.
+- ⏳ Known gap: `cluster deploy --simulate` still resolves (and may download) MongoDB binaries before planning.
+- ❌ SSH executor, remote-mode CLI flags, `ssh_port` and `RemotePathResolver` removed.
 
-### Implementation Status
+## Upgrade Safety (2026-11-20)
 
-**All Components Completed** ✅:
-- ✅ EARS Requirements Specification (`docs/specs/cluster-import-requirements.md`) - 32 requirements defined
-- ✅ Discovery Module (`pkg/import/discovery.go`) - IMP-001 through IMP-005
-  - Auto-detection of running MongoDB processes
-  - Manual mode with explicit configuration
-  - Systemd service detection
-  - MongoDB version and topology querying
-- ✅ Systemd Parser (`pkg/import/systemd.go`) - IMP-006, IMP-007
-  - Parse systemd unit files
-  - Extract MongoDB configuration from ExecStart directives
-  - Parameter extraction from command line arguments
-- ✅ Config Importer (`pkg/import/config_importer.go`) - IMP-010 through IMP-012
-  - Parse YAML and legacy MongoDB configs
-  - Generate mup-compatible configurations
-  - Preserve custom settings (SetParameter, Security, TLS, WiredTiger)
-- ✅ Directory Structure Builder (`pkg/import/structure.go`) - IMP-013 through IMP-016
-  - Create per-version directory layout
-  - Symlink data directories (zero data movement)
-  - Handle same-location edge cases
-  - Set up bin/, conf/, logs/ directories
-- ✅ Systemd Manager (`pkg/import/systemd_manager.go`) - IMP-008, IMP-009
-  - Disable/enable systemd services
-  - Automatic rollback on failure
-  - Batch operations for multiple services
-  - Service status checking
-- ✅ Import Orchestrator (`pkg/import/orchestrator.go`) - IMP-017 through IMP-022, IMP-029
-  - Complete workflow coordination (Phase 1-4)
-  - Replica set status querying
-  - PRIMARY step-down orchestration
-  - Replication lag verification
-  - Process migration to supervisord
-  - Metadata creation
-- ✅ Import Command CLI (`cmd/mup/cluster.go`)
-  - Full cobra command integration
-  - Auto-detect and manual modes
-  - Dry-run support
-  - Beautiful output formatting
-  - SSH support (via --ssh-host flag)
-- ✅ SSH Executor Integration - IMP-027, IMP-028
-  - Remote import capability via executor interface
-  - CLI flag support (--ssh-host)
-- ✅ Topology Generator (`pkg/import/topology_generator.go`) - IMP-033 through IMP-035
-  - Generate topology.yaml from discovered cluster state
-  - Support standalone, replica set, and sharded cluster topologies
-  - Save topology.yaml to cluster directory for declarative management
+Spec: `docs/specs/upgrade-safety-requirements.md` (UPGSAFE-001 to UPGSAFE-011).
 
-**Command Available**:
-```bash
-mup cluster import <cluster-name> [flags]
-```
+- ✅ **Replica set upgrade loop** (`pkg/upgrade/replica_set_upgrade.go`) - UPGSAFE-005, UPGSAFE-006. `replicaSetUpgrade.execute` waits for the set to settle and re-reads roles before every node. Live state is reached through the `replicaSetProbe` interface so ordering is unit-tested with a fake.
+- ✅ **Health evaluation** (`pkg/upgrade/safety.go`) - UPGSAFE-001. Arbiters count as healthy; shared by preflight and the upgrade loop.
+- ✅ **Version verification** (`pkg/upgrade/verify_version.go`) - UPGSAFE-007. `VerifyNodeVersion` runs `buildInfo` against the restarted node.
+- ✅ **Balancer** (`pkg/upgrade/balancer.go`) - UPGSAFE-008. `balancerGuard` pauses and restores; the flag lives in `upgrade-state.yaml`.
+- ✅ **Prompts** - UPGSAFE-002, UPGSAFE-003. Failover and resume confirmations honour `--prompt-level none`; "pause" at the FCV prompt pauses.
+- ✅ **Skipped nodes** - UPGSAFE-004. `PostUpgradeTasks` refuses to finish.
+- ✅ **Resume** (`pkg/upgrade/resume.go`) - UPGSAFE-009, UPGSAFE-010. Failed upgrades are recorded and resumable; binaries are installed by rename.
+- ✅ **Failure hook** (`pkg/upgrade/upgrade.go` `handleUpgradeFailure`) - UPGSAFE-011. Fires for any failed phase, not only pre-flight.
+- ✅ **Config server program names** - config servers are upgraded as `config-<port>`, matching their supervisor program (was `mongod-<port>`, which failed at the first stop).
+- ✅ `mup cluster upgrade --timeout` (default 12h) replaces the reused 30m deploy timeout.
+- ⏳ Not addressed: no rollback of a partially upgraded cluster; the `next` symlink is still removed when an upgrade stops; replication lag is not checked between nodes (member state is); upgrade orchestration has no test against a live cluster.
 
-### Import Process
+## Import Command (removed)
 
-1. **Discovery Phase** (IMP-001 through IMP-005)
-   - Auto-detect MongoDB processes or use manual configuration
-   - Detect systemd services and parse unit files
-   - Query MongoDB for version, variant (mongo/percona), and topology type
-
-2. **Version Detection** (IMP-005)
-   - Identify MongoDB version from running instances
-   - Detect variant (official MongoDB vs Percona)
-   - Determine topology (standalone, replica set, or sharded cluster)
-
-3. **Directory Structure Creation** (IMP-013 through IMP-016)
-   - Create per-version directory layout (`v{version}/`)
-   - **Data Migration via Symlinks** (IMP-014):
-     - No data movement - create symlinks from `data/` to existing data directories
-     - Zero-downtime for data access, only brief process restart required
-   - Set up `bin/`, `conf/`, and `logs/` directories
-   - Create `current` symlink (no `previous` initially)
-
-4. **Configuration Import** (IMP-010 through IMP-012)
-   - Parse existing mongod.conf/mongos.conf files
-   - Generate mup-compatible configs in `v{version}/conf/`
-   - Preserve custom MongoDB settings not in default templates
-
-4.5. **Topology Generation** (IMP-033 through IMP-035)
-   - Generate topology.yaml from discovered cluster state
-   - Support all topology types (standalone, replica set, sharded cluster)
-   - Save to `<cluster-dir>/topology.yaml` for future management operations
-
-5. **Supervisord Setup** (IMP-031, IMP-032)
-   - Generate unified supervisord configuration
-   - Set `fork: false` in MongoDB configs (supervisor manages lifecycle)
-   - Configure `autorestart = unexpected` for crash recovery only
-
-6. **Rolling Process Migration** (IMP-017 through IMP-022)
-   - **SECONDARY-First Migration**:
-     1. Identify replica set members and their roles
-     2. For each SECONDARY: stop systemd service → start via supervisord → verify health
-     3. Step down PRIMARY using `rs.stepDown()`
-     4. Migrate former PRIMARY (now SECONDARY)
-   - Verify replica set health after each member (replication lag < 30s)
-   - **Sharded Clusters**: Import config servers → shards → mongos routers
-
-7. **Systemd Migration** (IMP-008, IMP-009)
-   - Disable systemd services (`systemctl disable`)
-   - Keep unit files for rollback capability
-   - Re-enable systemd on failure (automatic rollback)
-
-8. **Metadata Creation** (IMP-029)
-   - Generate `meta.yaml` with cluster information
-   - Enable standard cluster management commands post-import
-
-9. **Validation** (IMP-023 through IMP-026)
-   - Pre-flight checks (permissions, disk space, connectivity)
-   - Post-import verification (replica set status, connection test)
-   - Automatic rollback on health check failures
-
-### Import Command Syntax
-
-```bash
-# Auto-detect mode (local)
-mup cluster import <cluster-name> --auto-detect
-
-# Auto-detect mode (remote via SSH)
-mup cluster import <cluster-name> --auto-detect --ssh-host user@host
-
-# Manual mode with explicit configuration
-mup cluster import <cluster-name> \
-  --config /etc/mongod.conf \
-  --data-dir /var/lib/mongodb \
-  --port 27017 \
-  [--ssh-host user@host]
-
-# Options
---dry-run              # Preview without changes
---keep-systemd-files   # Don't remove systemd unit files
---skip-restart         # Import structure only, don't restart processes
---force                # Skip safety prompts
-```
-
-### Key Design Decisions
-
-1. **Symlinks for Data** (IMP-014): Zero data movement reduces risk and downtime
-2. **Systemd Detection** (IMP-006): Automatic discovery and migration from systemd management
-3. **Rolling Migration** (IMP-017): SECONDARY→PRIMARY pattern minimizes downtime for replica sets
-4. **Non-Destructive** (IMP-009): Keep systemd services disabled (not deleted) for rollback
-5. **SSH-First Design** (IMP-027): Primary use case is remote servers with systemd
-6. **Checkpointing** (IMP-030): Save progress to resume if migration fails mid-process
-
-### EARS Requirement Tracing
-
-All implementation code includes EARS requirement IDs in comments for full traceability. For example:
-
-```go
-// IMP-002: Scan for MongoDB processes when auto-detect is requested
-func (d *Discoverer) scanProcesses() ([]Process, error) {
-    // Implementation...
-}
-```
-
-See `docs/specs/cluster-import-requirements.md` for complete requirements specification.
+`mup cluster import` and `pkg/import` were removed on 2026-11-20: mup is local-only and no longer takes over existing systemd-managed clusters. The IMP-* requirements are withdrawn.
 
 ## Plan-Only Testing Framework
 
@@ -594,7 +473,7 @@ The Plan-Only Testing Framework enables fast, token-efficient testing and previe
 - **40x Token Reduction**: Concise output vs verbose actual execution logs
 - **Zero Side Effects**: No filesystem changes, process starts, or network calls
 - **Deterministic**: Same input always produces same output
-- **Complete Coverage**: All cluster operations supported (deploy, upgrade, import, scale-out, etc.)
+- **Complete Coverage**: All cluster operations supported (deploy, upgrade, scale-out, etc.)
 
 ### Architecture
 
@@ -792,8 +671,6 @@ mup cluster deploy prod-cluster topology.yaml --version 7.0 --plan-only
 # Preview upgrade operation
 mup cluster upgrade prod-cluster --version 8.0 --plan-only
 
-# Preview import operation
-mup cluster import legacy-cluster --auto-detect --plan-only
 
 # Output:
 # [PLAN-ONLY] Planning deployment for cluster: prod-cluster
@@ -1200,7 +1077,7 @@ ok  	github.com/zph/mup/pkg/operation	0.456s
 
 1. **Phase 1**: ✅ COMPLETE - Core simulation framework (REQ-SIM-001 to REQ-SIM-026)
 2. **Phase 2**: ✅ COMPLETE - Scenario files and verbose mode (REQ-SIM-027, REQ-SIM-041 to REQ-SIM-043, REQ-SIM-049)
-3. **Phase 3**: PLANNED - Extend to upgrade/import commands (REQ-SIM-038 to REQ-SIM-040)
+3. **Phase 3**: PLANNED - Extend to upgrade command (REQ-SIM-038 to REQ-SIM-040)
 4. **Phase 4**: PLANNED - Deprecate --dry-run, migrate all tests (REQ-SIM-044 to REQ-SIM-050)
 
 ### Files to Create
@@ -1227,7 +1104,6 @@ All commands updated to support plan-only mode:
 - `cmd/mup/cluster.go` - Add --plan-only flag to all cluster commands
 - `pkg/deploy/deploy.go` - Use executor factory
 - `pkg/upgrade/upgrade.go` - Use executor factory
-- `pkg/import/orchestrator.go` - Use executor factory
 - All tests - Use PlanOnlyExecutor for fast, deterministic testing
 
 ---
@@ -1279,7 +1155,6 @@ All cluster-changing operations MUST use plan/apply:
 
 **Planned:**
 - `mup cluster upgrade` - Upgrade MongoDB versions
-- `mup cluster import` - Import existing clusters
 - `mup cluster scale-out` - Add nodes to cluster
 - `mup cluster scale-in` - Remove nodes from cluster
 - `mup cluster config-change` - Modify cluster configuration
@@ -1565,7 +1440,6 @@ func TestApplyWithMockExecutor(t *testing.T) {
 
 **Phase 2 (Planned):**
 - Apply plan/apply to upgrade operations
-- Apply plan/apply to import operations
 - Parallel operation execution optimization
 - Progress streaming via websocket
 
@@ -1691,7 +1565,7 @@ make test-e2e-verbose
 # Run specific E2E test
 go test -v -tags=e2e ./test/e2e/ -run TestHelpCommand
 
-# Run all tests (unit + integration + E2E + SSH)
+# Run all tests (unit + integration + E2E)
 make test-complete
 ```
 
@@ -1719,7 +1593,7 @@ test-e2e: build
 test-e2e-verbose: build
     $(GOTEST) -v -tags=e2e ./test/e2e/... -test.v
 
-test-complete: test-integration test-e2e test-ssh
+test-complete: test-integration test-e2e
     @echo "✓ All test suites passed"
 ```
 

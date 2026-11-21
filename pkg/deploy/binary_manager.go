@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zph/mup/pkg/paths"
+
 	"golang.org/x/mod/semver"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -58,19 +60,23 @@ type BinaryManager struct {
 	versionMu   sync.Mutex
 	httpClient  *http.Client
 
+	// archiveSHA256 maps a download URL to the checksum published for it.
+	archiveSHA256 map[string]string
+
 	// mongoshReleaseBaseURL is overridden by tests to serve release archives locally.
 	mongoshReleaseBaseURL string
 }
 
 // NewBinaryManager creates a new binary manager
 func NewBinaryManager() (*BinaryManager, error) {
-	homeDir, err := os.UserHomeDir()
+	storageDir, err := paths.StorageDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, err
 	}
-
-	storageDir := filepath.Join(homeDir, ".mup", "storage")
-	cacheDir := filepath.Join(storageDir, "packages")
+	cacheDir, err := paths.PackagesDir()
+	if err != nil {
+		return nil, err
+	}
 
 	return &BinaryManager{
 		cacheDir:   cacheDir,
@@ -83,6 +89,39 @@ func NewBinaryManager() (*BinaryManager, error) {
 func (bm *BinaryManager) Close() error {
 	// Nothing to clean up currently
 	return nil
+}
+
+// downloadTimeout bounds one archive download so a stalled connection cannot
+// hang a deploy or upgrade indefinitely.
+const downloadTimeout = 30 * time.Minute
+
+// downloadClient returns the HTTP client used for large archive downloads.
+func (bm *BinaryManager) downloadClient() *http.Client {
+	if bm.httpClient != nil {
+		return bm.httpClient
+	}
+	return &http.Client{Timeout: downloadTimeout}
+}
+
+// rememberChecksum records the checksum published for a download URL.
+func (bm *BinaryManager) rememberChecksum(url, sha256sum string) {
+	if sha256sum == "" {
+		return
+	}
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	if bm.archiveSHA256 == nil {
+		bm.archiveSHA256 = make(map[string]string)
+	}
+	bm.archiveSHA256[url] = sha256sum
+}
+
+// publishedChecksum returns the checksum recorded for a download URL, if any.
+func (bm *BinaryManager) publishedChecksum(url string) (string, bool) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	sum, ok := bm.archiveSHA256[url]
+	return sum, ok
 }
 
 func (bm *BinaryManager) client() *http.Client {
@@ -301,20 +340,35 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 		fmt.Printf("  Downloading %s %s for %s from .deb packages...\n", variant, version, platformKey)
 	}
 
-	// Create cache directory
-	if err := os.MkdirAll(binPath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create cache directory: %w", err)
+	// LOCAL-025: assemble the package in a staging directory and publish it
+	// whole, so an interrupted download never leaves a half-populated cache.
+	stagingDir, err := newCacheStaging(cacheDir)
+	if err != nil {
+		return "", err
+	}
+	published := false
+	defer func() {
+		if !published {
+			if err := os.RemoveAll(stagingDir); err != nil {
+				fmt.Printf("Warning: failed to remove staging directory %s: %v\n", stagingDir, err)
+			}
+		}
+	}()
+
+	stagingBin := filepath.Join(stagingDir, cacheBinDirName)
+	if err := os.MkdirAll(stagingBin, 0755); err != nil {
+		return "", fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
 	// Handle .deb packages differently from tarballs
 	if useDebPackages {
 		// Download and extract .deb packages
-		if err := bm.downloadAndExtractDebPackages(debURLs, binPath); err != nil {
+		if err := bm.downloadAndExtractDebPackages(debURLs, stagingBin); err != nil {
 			return "", fmt.Errorf("failed to download and extract .deb packages: %w", err)
 		}
 	} else {
 		// Download tarball
-		resp, err := http.Get(url)
+		resp, err := bm.downloadClient().Get(url)
 		if err != nil {
 			return "", fmt.Errorf("failed to download: %w", err)
 		}
@@ -344,6 +398,14 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 			return "", fmt.Errorf("failed to download to temp file: %w", err)
 		}
 
+		// LOCAL-024: verify against the published checksum when there is one
+		if expected, ok := bm.publishedChecksum(url); ok {
+			if err := verifySHA256(tmpFile.Name(), expected); err != nil {
+				return "", err
+			}
+			fmt.Printf("  ✓ Checksum verified (SHA-256)\n")
+		}
+
 		// Reset file pointer
 		if _, err := tmpFile.Seek(0, 0); err != nil {
 			return "", fmt.Errorf("failed to seek temp file: %w", err)
@@ -360,17 +422,22 @@ func (bm *BinaryManager) downloadWithVariant(version string, variant Variant, pl
 			return "", fmt.Errorf("failed to find bin directory: %w", err)
 		}
 
-		// Copy binaries to cache
-		if err := bm.copyBinaries(binDir, binPath); err != nil {
+		// Copy binaries into staging
+		if err := bm.copyBinaries(binDir, stagingBin); err != nil {
 			return "", fmt.Errorf("failed to copy binaries: %w", err)
 		}
 	}
 
 	// A package is complete only when it includes the shell selected for the
 	// server's wire protocol.
-	if err := bm.ensureShell(version, platform, binPath); err != nil {
+	if err := bm.ensureShell(version, platform, stagingBin); err != nil {
 		return "", fmt.Errorf("failed to ensure a compatible MongoDB shell: %w", err)
 	}
+
+	if err := publishStagedCache(stagingDir, cacheDir); err != nil {
+		return "", err
+	}
+	published = true
 
 	fmt.Printf("  ✓ %s %s for %s cached at %s\n", cases.Title(language.English).String(variant.String()), version, platformKey, binPath)
 	return binPath, nil
@@ -397,7 +464,8 @@ type MongoDBDownload struct {
 
 // MongoDBArchive represents archive information
 type MongoDBArchive struct {
-	URL string `json:"url"`
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
 }
 
 // getDownloadURLForPlatform gets the download URL for a specific platform using full.json
@@ -498,6 +566,7 @@ func (bm *BinaryManager) getDownloadURLForPlatform(version string, platform Plat
 		if matchesOS && download.Archive.URL != "" {
 			// Prefer community edition (base/targeted) over enterprise
 			if download.Edition == "" || download.Edition == "base" || download.Edition == "targeted" {
+				bm.rememberChecksum(download.Archive.URL, download.Archive.SHA256)
 				return download.Archive.URL, nil
 			}
 		}
@@ -994,7 +1063,15 @@ func (bm *BinaryManager) extractArchive(archive *os.File, targetDir string) erro
 			continue
 		}
 		relPath := filepath.Join(parts[1:]...)
-		targetPath := filepath.Join(targetDir, relPath)
+		if relPath == "" {
+			// The archive's root directory entry itself
+			continue
+		}
+		// LOCAL-023: never write outside the extraction directory
+		targetPath, err := safeExtractPath(targetDir, relPath)
+		if err != nil {
+			return err
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -1051,7 +1128,15 @@ func (bm *BinaryManager) extractZipArchive(archive *os.File, targetDir string) e
 			continue
 		}
 		relPath := filepath.Join(parts[1:]...)
-		targetPath := filepath.Join(targetDir, relPath)
+		if relPath == "" {
+			// The archive's root directory entry itself
+			continue
+		}
+		// LOCAL-023: never write outside the extraction directory
+		targetPath, err := safeExtractPath(targetDir, relPath)
+		if err != nil {
+			return err
+		}
 
 		if file.FileInfo().IsDir() {
 			// Create directory

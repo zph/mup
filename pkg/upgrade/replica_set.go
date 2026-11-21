@@ -47,43 +47,7 @@ func GetReplicaSetStatus(ctx context.Context, rsName string, hosts []string) ([]
 		return nil, fmt.Errorf("failed to get replica set status: %w", err)
 	}
 
-	members, ok := result["members"].(bson.A)
-	if !ok {
-		return nil, fmt.Errorf("unexpected replica set status format")
-	}
-
-	var rsmembers []ReplicaSetMember
-	for _, memberInterface := range members {
-		member, ok := memberInterface.(bson.M)
-		if !ok {
-			continue
-		}
-
-		name, _ := member["name"].(string)
-		state, _ := member["state"].(int32)
-		stateStr, _ := member["stateStr"].(string)
-		health, _ := member["health"].(int32)
-
-		// Parse host:port
-		parts := strings.Split(name, ":")
-		var host string
-		var port int
-		if len(parts) == 2 {
-			host = parts[0]
-			_, _ = fmt.Sscanf(parts[1], "%d", &port)
-		}
-
-		rsmembers = append(rsmembers, ReplicaSetMember{
-			Host:      host,
-			Port:      port,
-			StateStr:  stateStr,
-			StateNum:  state,
-			Health:    health,
-			IsPrimary: state == 1,
-		})
-	}
-
-	return rsmembers, nil
+	return parseReplicaSetMembers(result)
 }
 
 // StepDownPrimary steps down the primary of a replica set
@@ -146,7 +110,7 @@ func StepDownPrimary(ctx context.Context, primaryHost string, rsName string, all
 					break
 				}
 			}
-			if newPrimary != "" && newPrimary != oldPrimary {
+			if newPrimary != "" && !sameLocalNode(newPrimary, oldPrimary) {
 				break
 			}
 		}

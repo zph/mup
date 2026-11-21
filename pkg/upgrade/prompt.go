@@ -375,6 +375,12 @@ const (
 // PromptForFailover prompts user before performing a primary failover
 // [UPG-019] Failover confirmation with red warning
 func (p *Prompter) PromptForFailover(hostPort, rsName string, state *UpgradeState) (PromptResponse, error) {
+	// UPGSAFE-002: with prompts disabled the upgrade is unattended
+	if p.level == PromptLevelNone {
+		fmt.Printf("\n  Node %s is the PRIMARY of '%s'; stepping it down (prompts disabled)\n", hostPort, rsName)
+		return PromptResponseContinue, nil
+	}
+
 	fmt.Println()
 	fmt.Printf("%s%s═══════════════════════════════════════════════════════════════%s\n", colorBold, colorRed, colorReset)
 	fmt.Printf("%s%s                    ⚠️  FAILOVER REQUIRED  ⚠️%s\n", colorBold, colorRed, colorReset)

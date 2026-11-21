@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/zph/mup/pkg/executor"
+	"github.com/zph/mup/pkg/meta"
 	"github.com/zph/mup/pkg/naming"
 	"github.com/zph/mup/pkg/paths"
 	"github.com/zph/mup/pkg/plan"
@@ -72,11 +74,21 @@ type PlannerConfig struct {
 func (p *DeployPlanner) GeneratePlan(ctx context.Context) (*plan.Plan, error) {
 	planID := plan.NewPlanID()
 
+	// LOCAL-005: mup only manages clusters on the local machine
+	if remote := p.topology.NonLocalHosts(); len(remote) > 0 {
+		return nil, fmt.Errorf("remote hosts are not supported (all hosts must be localhost): %s", strings.Join(remote, ", "))
+	}
+
 	// Allocate ports for local deployments BEFORE validation and planning
 	if p.isLocal {
 		if err := p.allocatePorts(); err != nil {
 			return nil, fmt.Errorf("failed to allocate ports: %w", err)
 		}
+	}
+
+	// LOCAL-006: validate after allocation so allocated ports are checked for conflicts too
+	if err := p.topology.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid topology: %w", err)
 	}
 
 	// Run validation first
@@ -726,15 +738,48 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 	}
 
 	// Collect shard replica sets
+	// LOCAL-022: explicit priority, hidden and votes settings travel with the plan
+	memberOptions := make(map[string]map[string]map[string]interface{}) // rs name -> member -> options
 	for _, node := range p.topology.Mongod {
 		if node.ReplicaSet != "" {
 			member := fmt.Sprintf("%s:%d", normalizeHost(node.Host), node.Port)
 			replicaSets[node.ReplicaSet] = append(replicaSets[node.ReplicaSet], member)
+
+			options := make(map[string]interface{})
+			if node.Priority != nil {
+				options["priority"] = *node.Priority
+			}
+			if node.Hidden != nil {
+				options["hidden"] = *node.Hidden
+			}
+			if node.Votes != nil {
+				options["votes"] = *node.Votes
+			}
+			if len(options) > 0 {
+				if memberOptions[node.ReplicaSet] == nil {
+					memberOptions[node.ReplicaSet] = make(map[string]map[string]interface{})
+				}
+				memberOptions[node.ReplicaSet][member] = options
+			}
 		}
 	}
 
-	// Initialize each replica set
-	for rsName, members := range replicaSets {
+	// Initialize each replica set, in name order so plans are reproducible
+	rsNames := make([]string, 0, len(replicaSets))
+	for rsName := range replicaSets {
+		rsNames = append(rsNames, rsName)
+	}
+	sort.Strings(rsNames)
+
+	for _, rsName := range rsNames {
+		members := replicaSets[rsName]
+		initParams := map[string]interface{}{
+			"replica_set": rsName,
+			"members":     members,
+		}
+		if options := memberOptions[rsName]; len(options) > 0 {
+			initParams["member_options"] = options
+		}
 		operations = append(operations, plan.PlannedOperation{
 			ID:          plan.NewOperationID("initialize", opIndex),
 			Type:        plan.OpInitReplicaSet,
@@ -743,10 +788,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 				Type: "replica_set",
 				Name: rsName,
 			},
-			Params: map[string]interface{}{
-				"replica_set": rsName,
-				"members":     members,
-			},
+			Params: initParams,
 			Changes: []plan.Change{
 				{
 					ResourceType: "replica_set",
@@ -831,6 +873,7 @@ func (p *DeployPlanner) generateInitializePhase() plan.PlannedPhase {
 			},
 			Params: map[string]interface{}{
 				"expected_shards": len(shards),
+				"ports":           p.getAllPorts(),
 			},
 			Changes:  []plan.Change{},
 			Parallel: false,
@@ -860,16 +903,16 @@ func (p *DeployPlanner) generateFinalizePhase() plan.PlannedPhase {
 			Type: "cluster",
 			Name: p.clusterName,
 		},
+		Params: map[string]interface{}{
+			"ports": p.getAllPorts(),
+		},
 		Changes:  []plan.Change{},
 		Parallel: false,
 	})
 	opIndex++
 
 	// Save metadata
-	deployMode := "local"
-	if !p.isLocal {
-		deployMode = "remote"
-	}
+	deployMode := meta.DeployModeLocal
 
 	operations = append(operations, plan.PlannedOperation{
 		ID:          plan.NewOperationID("finalize", opIndex),

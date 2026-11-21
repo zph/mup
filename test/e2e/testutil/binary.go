@@ -10,10 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
+
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/zph/mup/pkg/paths"
 )
 
 var (
@@ -145,6 +148,11 @@ func RunCommandWithEnv(t *testing.T, env map[string]string, args ...string) *Com
 	// Prepare command
 	cmd := exec.CommandContext(ctx, binary, args...)
 
+	if storageDir := env[paths.EnvStorageDir]; storageDir != "" {
+		seedBinaryCaches(t, storageDir)
+		rememberClusterEnv(args, env)
+	}
+
 	// Set environment
 	cmd.Env = os.Environ()
 	for k, v := range env {
@@ -212,6 +220,11 @@ func RunCommandWithEnvAndInput(t *testing.T, env map[string]string, input string
 
 	// Prepare command
 	cmd := exec.CommandContext(ctx, binary, args...)
+
+	if storageDir := env[paths.EnvStorageDir]; storageDir != "" {
+		seedBinaryCaches(t, storageDir)
+		rememberClusterEnv(args, env)
+	}
 
 	// Set environment
 	cmd.Env = os.Environ()
@@ -317,4 +330,65 @@ func AssertStderrContains(t *testing.T, result *CommandResult, expected string) 
 		t.Fatalf("Stderr does not contain %q\nArgs: %v\nStderr:\n%s",
 			expected, result.Args, result.Stderr)
 	}
+}
+
+// Cache directories shared from the developer's real storage so isolated
+// tests do not re-download MongoDB and supervisord for every run.
+var sharedCacheDirs = []string{"packages", "bin"}
+
+// seedBinaryCaches links the real binary caches into an isolated storage
+// directory. Missing real caches are skipped; mup then downloads as usual.
+func seedBinaryCaches(t *testing.T, storageDir string) {
+	t.Helper()
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Logf("not seeding binary caches: %v", err)
+		return
+	}
+	realStorage := filepath.Join(homeDir, ".mup", "storage")
+	if realStorage == storageDir {
+		return
+	}
+	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+		t.Fatalf("failed to create storage dir %s: %v", storageDir, err)
+	}
+
+	for _, name := range sharedCacheDirs {
+		source := filepath.Join(realStorage, name)
+		target := filepath.Join(storageDir, name)
+		if _, err := os.Stat(source); err != nil {
+			continue
+		}
+		if _, err := os.Lstat(target); err == nil {
+			continue
+		}
+		if err := os.Symlink(source, target); err != nil {
+			t.Fatalf("failed to seed %s cache: %v", name, err)
+		}
+	}
+}
+
+var (
+	clusterEnvMu sync.Mutex
+	clusterEnvs  = map[string]map[string]string{}
+)
+
+// rememberClusterEnv records the environment a cluster was deployed with so
+// CleanupCluster can find it again.
+func rememberClusterEnv(args []string, env map[string]string) {
+	const deployArgCount = 3
+	if len(args) < deployArgCount || args[0] != "cluster" || args[1] != "deploy" {
+		return
+	}
+	clusterEnvMu.Lock()
+	defer clusterEnvMu.Unlock()
+	clusterEnvs[args[2]] = env
+}
+
+// ClusterEnv returns the environment a cluster was deployed with, if any.
+func ClusterEnv(clusterName string) map[string]string {
+	clusterEnvMu.Lock()
+	defer clusterEnvMu.Unlock()
+	return clusterEnvs[clusterName]
 }

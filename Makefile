@@ -1,4 +1,4 @@
-.PHONY: all build clean test install help docker-ssh-image test-ssh test-ssh-short deps fmt lint lint-ci check
+.PHONY: all build clean test install help deps fmt lint lint-ci check
 
 # Binary output directory
 BIN_DIR := ./bin
@@ -52,20 +52,9 @@ test-coverage:
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "✓ Coverage report generated: coverage.html"
 
-## test-ssh-short: Run quick SSH tests (skip integration tests)
-test-ssh-short:
-	@echo "Running quick SSH tests..."
-	$(GOTEST) -short -v ./pkg/executor/
-
-## test-ssh: Run full SSH integration tests (requires Docker)
-test-ssh: docker-ssh-image
-	@echo "Running SSH integration tests..."
-	@echo "Note: This will launch Docker containers for testing"
-	$(GOTEST) -v -run TestSSH ./pkg/executor/
-
-## test-all: Run all tests including SSH integration tests
-test-all: docker-ssh-image
-	@echo "Running all tests including SSH integration tests..."
+## test-all: Run all tests
+test-all:
+	@echo "Running all tests..."
 	$(GOTEST) -v ./...
 
 ## test-e2e: Run end-to-end tests against actual binary
@@ -86,8 +75,8 @@ test-e2e-verbose: build
 	$(GOTEST) -v -tags=e2e ./test/e2e/... -test.v
 	@echo "✓ E2E tests complete"
 
-## test-complete: Run all test suites (unit, integration, e2e, ssh)
-test-complete: test-integration test-e2e test-ssh
+## test-complete: Run all test suites (unit, integration, e2e)
+test-complete: test-integration test-e2e
 	@echo "✓ All test suites passed"
 
 ## install: Install mup to $GOPATH/bin
@@ -105,7 +94,7 @@ deps:
 	@echo ""
 	@echo "Installing development tools..."
 	@echo "Installing golangci-lint..."
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	@echo "Installing gotestsum..."
 	@go install gotest.tools/gotestsum@latest
 	@echo "✓ Development tools installed"
@@ -127,7 +116,7 @@ lint:
 		golangci-lint run ./...; \
 		echo "✓ Lint complete"; \
 	else \
-		echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+		echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"; \
 		exit 1; \
 	fi
 
@@ -144,11 +133,6 @@ check: lint
 ## run: Build and run playground start command
 run: build
 	$(BIN_DIR)/$(BINARY_NAME) playground start
-
-## docker-ssh-image: Build Docker image for SSH testing
-docker-ssh-image:
-	@echo "Building SSH test node Docker image..."
-	@bash test/docker/ssh-node/build.sh
 
 ## help: Show this help message
 help:

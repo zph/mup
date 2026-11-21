@@ -17,6 +17,7 @@ import (
 	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
 	"github.com/zph/mup/pkg/mongo"
+	"github.com/zph/mup/pkg/paths"
 	"github.com/zph/mup/pkg/plan"
 	"github.com/zph/mup/pkg/supervisor"
 	"github.com/zph/mup/pkg/template"
@@ -91,9 +92,10 @@ func (h *DownloadBinaryHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	}
 
 	// Determine platform
-	platform := deploy.Platform{
-		OS:   "darwin", // TODO: Get from executor
-		Arch: "arm64",  // TODO: Get from executor
+	platform := deploy.GetCurrentPlatform()
+
+	if isSimulated(exec) {
+		return simulatedResult(exec, op, fmt.Sprintf("download MongoDB %s (%s) binaries", version, variantStr))
 	}
 
 	// Download binaries
@@ -408,7 +410,7 @@ func (h *CreateSymlinkHandler) PreHook(ctx context.Context, op *plan.PlannedOper
 	// For absolute targets, check if they exist
 	// For relative targets (like "v3.6"), we can't easily validate without knowing the working directory
 	if filepath.IsAbs(targetPath) {
-		if _, err := os.Stat(targetPath); err != nil {
+		if exists, err := exec.FileExists(targetPath); err != nil || !exists {
 			result.AddError(fmt.Sprintf("symlink target does not exist: %s", targetPath))
 			return result, nil
 		}
@@ -416,7 +418,7 @@ func (h *CreateSymlinkHandler) PreHook(ctx context.Context, op *plan.PlannedOper
 
 	// Check that parent directory of link exists
 	linkDir := filepath.Dir(linkPath)
-	if _, err := os.Stat(linkDir); err != nil {
+	if exists, err := exec.FileExists(linkDir); err != nil || !exists {
 		result.AddError(fmt.Sprintf("parent directory of symlink does not exist: %s", linkDir))
 		return result, nil
 	}
@@ -445,6 +447,10 @@ func (h *CreateSymlinkHandler) PreHook(ctx context.Context, op *plan.PlannedOper
 func (h *CreateSymlinkHandler) Execute(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (*apply.OperationResult, error) {
 	linkPath := op.Params["link_path"].(string)
 	targetPath := op.Params["target_path"].(string)
+
+	if isSimulated(exec) {
+		return simulatedFileResult(exec, op, linkPath, fmt.Sprintf("symlink %s -> %s", linkPath, targetPath))
+	}
 
 	// Remove existing symlink if present
 	_ = os.Remove(linkPath)
@@ -917,7 +923,7 @@ func (h *StartProcessHandler) PreHook(ctx context.Context, op *plan.PlannedOpera
 
 	// Validate supervisor config exists
 	supervisorConfig, _ := op.Params["supervisor_config"].(string)
-	if _, err := os.Stat(supervisorConfig); err != nil {
+	if exists, err := exec.FileExists(supervisorConfig); err != nil || !exists {
 		result.AddError(fmt.Sprintf("supervisor config not found: %s", supervisorConfig))
 		return result, nil
 	}
@@ -949,14 +955,9 @@ func (h *StartProcessHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 	}
 
 	// Get supervisor binary path
-	homeDir, err := os.UserHomeDir()
+	binaryPath, err := supervisordBinaryPath(exec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
-	binaryPath, err := supervisor.GetSupervisordBinary(cacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
+		return nil, err
 	}
 
 	// Construct supervisorctl command
@@ -1030,10 +1031,7 @@ func (h *WaitForProcessHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 	}
 
 	// Check if in simulation mode
-	execType := fmt.Sprintf("%T", exec)
-	isSimulation := strings.Contains(execType, "Simulation")
-
-	if isSimulation {
+	if isSimulated(exec) {
 		// REQ-SIM-004: Record operation in simulation mode
 		cmdStr := fmt.Sprintf("Wait for process on port %d (timeout: %ds)", port, timeoutSec)
 		_, _ = exec.Execute(cmdStr)
@@ -1183,22 +1181,10 @@ func (h *InitReplicaSetHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 		return nil, fmt.Errorf("members parameter is not a list (got type %T)", membersRaw)
 	}
 
-	// Convert to member documents for replica set config
-	memberDocs := make([]bson.M, len(members))
-	for i, m := range members {
-		hostPort, ok := m.(string)
-		if !ok {
-			return nil, fmt.Errorf("member %d is not a string", i)
-		}
-
-		memberDocs[i] = bson.M{
-			"_id":  i,
-			"host": hostPort,
-		}
-	}
-
-	if len(memberDocs) == 0 {
-		return nil, fmt.Errorf("no members provided")
+	// LOCAL-022: carry priority, hidden and votes from the topology
+	memberDocs, err := replicaSetMemberDocs(members, op.Params[paramMemberOptions])
+	if err != nil {
+		return nil, err
 	}
 
 	// Use MongoDB client abstraction (handles both simulation and real execution)
@@ -1300,8 +1286,7 @@ func (h *InitReplicaSetHandler) Execute(ctx context.Context, op *plan.PlannedOpe
 		}
 
 		// In real mode, wait between retries
-		execType := fmt.Sprintf("%T", exec)
-		if !strings.Contains(execType, "Simulation") {
+		if !isSimulated(exec) {
 			time.Sleep(2 * time.Second)
 		}
 
@@ -1485,16 +1470,15 @@ func (h *VerifyHealthHandler) PreHook(ctx context.Context, op *plan.PlannedOpera
 }
 
 func (h *VerifyHealthHandler) Execute(ctx context.Context, op *plan.PlannedOperation, exec executor.Executor) (*apply.OperationResult, error) {
-	// Get ports to check from params if provided
-	var portsToCheck []int
-	if portsRaw, ok := op.Params["ports"]; ok {
-		if ports, ok := portsRaw.([]interface{}); ok {
-			for _, p := range ports {
-				if portFloat, ok := p.(float64); ok {
-					portsToCheck = append(portsToCheck, int(portFloat))
-				}
-			}
-		}
+	portsToCheck := portsParam(op.Params[paramPorts])
+
+	// LOCAL-010: a health check with nothing to check must not pass
+	if len(portsToCheck) == 0 {
+		return nil, fmt.Errorf("health check failed: no ports to verify")
+	}
+
+	if isSimulated(exec) {
+		return simulatedResult(exec, op, fmt.Sprintf("verify processes listening on ports %v", portsToCheck))
 	}
 
 	// Verify each port is in use (meaning process is listening)
@@ -1571,50 +1555,49 @@ func (h *SaveMetadataHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 	binPath, _ := op.Params["bin_path"].(string)
 	deployMode, _ := op.Params["deploy_mode"].(string)
 
-	// Get topology if provided
+	// LOCAL-016: accept the topology from an in-memory or JSON-loaded plan
 	var topo *topology.Topology
 	if topoData, ok := op.Params["topology"]; ok {
-		if t, ok := topoData.(*topology.Topology); ok {
-			topo = t
+		t, err := topologyParam(topoData)
+		if err != nil {
+			return nil, err
 		}
+		topo = t
 	}
 
-	// Build node metadata from topology
+	if isSimulated(exec) {
+		return simulatedResult(exec, op, fmt.Sprintf("save cluster metadata for %s", clusterName))
+	}
+
+	metaMgr, err := meta.NewManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create meta manager: %w", err)
+	}
+
+	// LOCAL-004: record the paths mup deployed to, not raw topology values
+	resolver := paths.NewLocalPathResolver(metaMgr.GetClusterDir(clusterName), version)
 	var nodes []meta.NodeMetadata
 	if topo != nil {
 		for _, cs := range topo.ConfigSvr {
-			nodes = append(nodes, meta.NodeMetadata{
-				Type:                  "config",
-				Host:                  cs.Host,
-				Port:                  cs.Port,
-				ReplicaSet:            cs.ReplicaSet,
-				DataDir:               cs.DataDir,
-				LogDir:                cs.LogDir,
-				ConfigDir:             cs.ConfigDir,
-				SupervisorProgramName: fmt.Sprintf("config-%d", cs.Port),
-			})
+			node, err := resolvedNodeMetadata(resolver, nodeTypeConfig, cs.Host, cs.Port, cs.ReplicaSet)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, node)
 		}
 		for _, mongod := range topo.Mongod {
-			nodes = append(nodes, meta.NodeMetadata{
-				Type:                  "mongod",
-				Host:                  mongod.Host,
-				Port:                  mongod.Port,
-				ReplicaSet:            mongod.ReplicaSet,
-				DataDir:               mongod.DataDir,
-				LogDir:                mongod.LogDir,
-				ConfigDir:             mongod.ConfigDir,
-				SupervisorProgramName: fmt.Sprintf("mongod-%d", mongod.Port),
-			})
+			node, err := resolvedNodeMetadata(resolver, nodeTypeMongod, mongod.Host, mongod.Port, mongod.ReplicaSet)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, node)
 		}
 		for _, mongos := range topo.Mongos {
-			nodes = append(nodes, meta.NodeMetadata{
-				Type:                  "mongos",
-				Host:                  mongos.Host,
-				Port:                  mongos.Port,
-				LogDir:                mongos.LogDir,
-				ConfigDir:             mongos.ConfigDir,
-				SupervisorProgramName: fmt.Sprintf("mongos-%d", mongos.Port),
-			})
+			node, err := resolvedNodeMetadata(resolver, nodeTypeMongos, mongos.Host, mongos.Port, "")
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, node)
 		}
 	}
 
@@ -1635,7 +1618,7 @@ func (h *SaveMetadataHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 	if len(nodes) > 0 {
 		// Find first mongos or mongod for connection
 		for _, node := range nodes {
-			if node.Type == "mongos" || node.Type == "mongod" {
+			if node.Type == nodeTypeMongos || node.Type == nodeTypeMongod {
 				// Determine which shell to use
 				shell := "mongosh"
 				if version < "4.0" {
@@ -1647,12 +1630,6 @@ func (h *SaveMetadataHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 				break
 			}
 		}
-	}
-
-	// Save metadata
-	metaMgr, err := meta.NewManager()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create meta manager: %w", err)
 	}
 
 	if err := metaMgr.Save(metadata); err != nil {
@@ -1668,6 +1645,83 @@ func (h *SaveMetadataHandler) Execute(ctx context.Context, op *plan.PlannedOpera
 			"meta_file":    metaMgr.GetMetaFile(clusterName),
 		},
 	}, nil
+}
+
+// topologyParam reads a topology from an in-memory plan (*topology.Topology)
+// or one loaded from JSON (a generic map).
+func topologyParam(raw interface{}) (*topology.Topology, error) {
+	switch t := raw.(type) {
+	case *topology.Topology:
+		return t, nil
+	case map[string]interface{}:
+		data, err := json.Marshal(t)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize topology parameter: %w", err)
+		}
+		topo := &topology.Topology{}
+		if err := json.Unmarshal(data, topo); err != nil {
+			return nil, fmt.Errorf("failed to deserialize topology: %w", err)
+		}
+		return topo, nil
+	}
+	return nil, fmt.Errorf("topology parameter not found or invalid type")
+}
+
+// paramPorts is the operation parameter listing ports a health check verifies.
+const paramPorts = "ports"
+
+// portsParam reads a port list from an in-memory plan ([]int) or one loaded
+// from JSON ([]interface{} of float64).
+func portsParam(raw interface{}) []int {
+	switch ports := raw.(type) {
+	case []int:
+		return ports
+	case []interface{}:
+		result := make([]int, 0, len(ports))
+		for _, p := range ports {
+			switch v := p.(type) {
+			case float64:
+				result = append(result, int(v))
+			case int:
+				result = append(result, v)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// Node types as recorded in cluster metadata and used in local path layout.
+const (
+	nodeTypeMongod = "mongod"
+	nodeTypeMongos = "mongos"
+	nodeTypeConfig = "config"
+)
+
+// resolvedNodeMetadata builds node metadata using the local path layout.
+// mongos nodes hold no data, so their DataDir stays empty.
+func resolvedNodeMetadata(resolver *paths.LocalPathResolver, nodeType, host string, port int, replicaSet string) (meta.NodeMetadata, error) {
+	node := meta.NodeMetadata{
+		Type:                  nodeType,
+		Host:                  host,
+		Port:                  port,
+		ReplicaSet:            replicaSet,
+		SupervisorProgramName: fmt.Sprintf("%s-%d", nodeType, port),
+	}
+
+	var err error
+	if nodeType != nodeTypeMongos {
+		if node.DataDir, err = resolver.DataDir(host, port); err != nil {
+			return node, err
+		}
+	}
+	if node.LogDir, err = resolver.LogDir(nodeType, host, port); err != nil {
+		return node, err
+	}
+	if node.ConfigDir, err = resolver.ConfigDir(nodeType, host, port); err != nil {
+		return node, err
+	}
+	return node, nil
 }
 
 // REQ-PES-048: Post-execution verification
@@ -1913,19 +1967,14 @@ func (h *GenerateSupervisorConfigHandler) Execute(ctx context.Context, op *plan.
 	version := op.Params["version"].(string)
 	binPath := op.Params["bin_path"].(string)
 
-	// Handle topology - it may be a map from JSON deserialization
-	var topo *topology.Topology
-	if topoPtr, ok := op.Params["topology"].(*topology.Topology); ok {
-		topo = topoPtr
-	} else if topoMap, ok := op.Params["topology"].(map[string]interface{}); ok {
-		// Deserialize from map (JSON unmarshaling)
-		topoBytes, _ := json.Marshal(topoMap)
-		topo = &topology.Topology{}
-		if err := json.Unmarshal(topoBytes, topo); err != nil {
-			return nil, fmt.Errorf("failed to deserialize topology: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("topology parameter not found or invalid type")
+	topo, err := topologyParam(op.Params["topology"])
+	if err != nil {
+		return nil, err
+	}
+
+	if isSimulated(exec) {
+		configPath := filepath.Join(clusterDir, "supervisor.ini")
+		return simulatedFileResult(exec, op, configPath, fmt.Sprintf("generate supervisor config at %s", configPath))
 	}
 
 	// Import supervisor package to use config generator
@@ -2000,27 +2049,22 @@ func (h *StartSupervisorHandler) PreHook(ctx context.Context, op *plan.PlannedOp
 	}
 
 	// Check if supervisor binary exists
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		result.AddError(fmt.Sprintf("failed to get home directory: %v", err))
-		return result, nil
-	}
-	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
-	binaryPath, err := supervisor.GetSupervisordBinary(cacheDir)
+	binaryPath, err := supervisordBinaryPath(exec)
 	if err != nil {
 		result.AddError(fmt.Sprintf("supervisord binary not found: %v", err))
 		return result, nil
 	}
 
-	// Check if binary is executable
-	if _, err := os.Stat(binaryPath); err != nil {
-		result.AddError(fmt.Sprintf("supervisord binary not accessible: %v", err))
-		return result, nil
+	if !isSimulated(exec) {
+		if _, err := os.Stat(binaryPath); err != nil {
+			result.AddError(fmt.Sprintf("supervisord binary not accessible: %v", err))
+			return result, nil
+		}
 	}
 
 	// Check if config file exists
 	configPath := filepath.Join(clusterDir, "supervisor.ini")
-	if _, err := os.Stat(configPath); err != nil {
+	if exists, err := exec.FileExists(configPath); err != nil || !exists {
 		result.AddError(fmt.Sprintf("supervisor config not found: %s", configPath))
 		return result, nil
 	}
@@ -2048,14 +2092,9 @@ func (h *StartSupervisorHandler) Execute(ctx context.Context, op *plan.PlannedOp
 	}
 
 	// Get supervisor binary path
-	homeDir, err := os.UserHomeDir()
+	binaryPath, err := supervisordBinaryPath(exec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-	cacheDir := filepath.Join(homeDir, ".mup", "storage", "bin")
-	binaryPath, err := supervisor.GetSupervisordBinary(cacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get supervisord binary: %w", err)
+		return nil, err
 	}
 
 	// Get supervisor config and HTTP port
@@ -2064,6 +2103,11 @@ func (h *StartSupervisorHandler) Execute(ctx context.Context, op *plan.PlannedOp
 
 	// Construct supervisord start command
 	command := fmt.Sprintf("%s -c %s", binaryPath, configPath)
+
+	// LOCAL-026
+	if err := ensureSupervisorPortFree(exec, httpPort, clusterName); err != nil {
+		return nil, err
+	}
 
 	fmt.Printf("  Starting supervisord daemon for cluster %s (HTTP port: %d)...\n", clusterName, httpPort)
 

@@ -2,10 +2,11 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/zph/mup/pkg/executor"
 	"github.com/zph/mup/pkg/meta"
 	"github.com/zph/mup/pkg/supervisor"
 )
@@ -71,45 +72,13 @@ func (m *Manager) Start(ctx context.Context, clusterName string, nodeFilter stri
 		nodesToStart = append(nodesToStart, node)
 	}
 
-	// Start all processes in parallel
-	if len(programNames) > 0 {
-		fmt.Printf("  Starting %d node(s) in parallel...\n", len(programNames))
-		if err := supMgr.StartProcesses(programNames); err != nil {
-			return fmt.Errorf("failed to start processes: %w", err)
-		}
-
-		// Show live progress while processes are starting
-		deadline := time.Now().Add(30 * time.Second)
-		started := make(map[string]bool)
-
-		for time.Now().Before(deadline) && len(started) < len(nodesToStart) {
-			for _, node := range nodesToStart {
-				if started[node.SupervisorProgramName] {
-					continue
-				}
-
-				status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
-				if err == nil && status.State == "Running" {
-					fmt.Printf("  ✓ %s %s:%d running (PID: %d)\n", node.Type, node.Host, node.Port, status.PID)
-					started[node.SupervisorProgramName] = true
-					node.PID = status.PID
-				}
+	// LOCAL-021: config servers, then shard members, then mongos
+	for _, group := range nodeGroupsForStart(nodesToStart) {
+		if err := m.startNodeGroup(supMgr, group); err != nil {
+			if saveErr := m.metaMgr.Save(metadata); saveErr != nil {
+				return errors.Join(err, fmt.Errorf("failed to update metadata: %w", saveErr))
 			}
-			if len(started) < len(nodesToStart) {
-				time.Sleep(200 * time.Millisecond)
-			}
-		}
-
-		// Get final status for each node and save PIDs
-		for _, node := range nodesToStart {
-			status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
-			if err != nil {
-				fmt.Printf("  ! Started %s %s:%d (status check failed: %v)\n", node.Type, node.Host, node.Port, err)
-			} else {
-				fmt.Printf("  ✓ Started %s %s:%d (PID: %d, state: %s)\n", node.Type, node.Host, node.Port, status.PID, status.State)
-				// Save PID to metadata
-				node.PID = status.PID
-			}
+			return err
 		}
 	}
 
@@ -216,15 +185,14 @@ func (m *Manager) Stop(ctx context.Context, clusterName string, nodeFilter strin
 		nodesToStop = append(nodesToStop, node)
 	}
 
-	// Stop all MongoDB processes in parallel
-	if len(programNames) > 0 {
-		fmt.Printf("  Stopping %d node(s) in parallel...\n", len(programNames))
-		if err := supMgr.StopProcesses(programNames); err != nil {
+	// LOCAL-021: mongos first, then shard members, then config servers
+	for _, group := range nodeGroupsForStop(nodesToStop) {
+		names := programNamesOf(group)
+		fmt.Printf("  Stopping %d %s node(s)...\n", len(names), group[0].Type)
+		if err := supMgr.StopProcesses(names); err != nil {
 			return fmt.Errorf("failed to stop processes: %w", err)
 		}
-
-		// Show stopped nodes
-		for _, node := range nodesToStop {
+		for _, node := range group {
 			fmt.Printf("  ✓ Stopped %s %s:%d\n", node.Type, node.Host, node.Port)
 		}
 	}
@@ -268,32 +236,116 @@ func (m *Manager) stopMonitoring(_ context.Context, clusterName string) error {
 	return supMgr.StopGroup("monitoring")
 }
 
-// createExecutors creates executors for the cluster
-func (m *Manager) createExecutors(metadata *meta.ClusterMetadata) (map[string]executor.Executor, error) {
-	executors := make(map[string]executor.Executor)
-
-	// Get unique hosts
-	hosts := make(map[string]bool)
-	for _, node := range metadata.Nodes {
-		hosts[node.Host] = true
+// nodesNotRunning returns a description of each node whose supervisor process
+// is not RUNNING, and records the PID of those that are.
+func nodesNotRunning(nodes []*meta.NodeMetadata, getStatus func(name string) (*supervisor.ProcessStatus, error)) []string {
+	var failed []string
+	for _, node := range nodes {
+		addr := fmt.Sprintf("%s %s:%d", node.Type, node.Host, node.Port)
+		status, err := getStatus(node.SupervisorProgramName)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s (status check failed: %v)", addr, err))
+			continue
+		}
+		state := status.ProcessState()
+		if !state.IsRunning() {
+			failed = append(failed, fmt.Sprintf("%s (state: %s)", addr, state))
+			continue
+		}
+		node.PID = status.PID
 	}
+	return failed
+}
 
-	// Create executor for each host
-	for host := range hosts {
-		if metadata.DeployMode == "local" {
-			executors[host] = executor.NewLocalExecutor()
-		} else {
-			// TODO: Create SSH executor
-			return nil, fmt.Errorf("remote mode not yet implemented")
+// Node types as recorded in cluster metadata.
+const (
+	nodeTypeConfig = "config"
+	nodeTypeMongos = "mongos"
+)
+
+// nodeStartupTimeout bounds how long one group of nodes may take to reach RUNNING.
+const (
+	nodeStartupTimeout = 30 * time.Second
+	nodeStartupPoll    = 200 * time.Millisecond
+)
+
+// nodeGroupsForStart splits nodes into the order a sharded cluster needs:
+// config servers, then data-bearing members, then mongos. Empty groups are
+// omitted, so a replica set or standalone is a single group.
+// LOCAL-021
+func nodeGroupsForStart(nodes []*meta.NodeMetadata) [][]*meta.NodeMetadata {
+	var config, data, mongos []*meta.NodeMetadata
+	for _, node := range nodes {
+		switch node.Type {
+		case nodeTypeConfig:
+			config = append(config, node)
+		case nodeTypeMongos:
+			mongos = append(mongos, node)
+		default:
+			data = append(data, node)
 		}
 	}
 
-	return executors, nil
+	var groups [][]*meta.NodeMetadata
+	for _, group := range [][]*meta.NodeMetadata{config, data, mongos} {
+		if len(group) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups
 }
 
-// closeExecutors closes all executors
-func (m *Manager) closeExecutors(executors map[string]executor.Executor) {
-	for _, exec := range executors {
-		_ = exec.Close()
+// nodeGroupsForStop is the reverse of nodeGroupsForStart.
+func nodeGroupsForStop(nodes []*meta.NodeMetadata) [][]*meta.NodeMetadata {
+	groups := nodeGroupsForStart(nodes)
+	for i, j := 0, len(groups)-1; i < j; i, j = i+1, j-1 {
+		groups[i], groups[j] = groups[j], groups[i]
 	}
+	return groups
+}
+
+func programNamesOf(nodes []*meta.NodeMetadata) []string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.SupervisorProgramName)
+	}
+	return names
+}
+
+// startNodeGroup starts one group of nodes together and waits for all of them
+// to reach RUNNING.
+// LOCAL-012
+func (m *Manager) startNodeGroup(supMgr *supervisor.Manager, nodes []*meta.NodeMetadata) error {
+	names := programNamesOf(nodes)
+	fmt.Printf("  Starting %d %s node(s)...\n", len(names), nodes[0].Type)
+	if err := supMgr.StartProcesses(names); err != nil {
+		return fmt.Errorf("failed to start processes: %w", err)
+	}
+
+	deadline := time.Now().Add(nodeStartupTimeout)
+	started := make(map[string]bool)
+	for time.Now().Before(deadline) && len(started) < len(nodes) {
+		for _, node := range nodes {
+			if started[node.SupervisorProgramName] {
+				continue
+			}
+			status, err := supMgr.GetProcessStatus(node.SupervisorProgramName)
+			if err == nil && status.ProcessState().IsRunning() {
+				fmt.Printf("  ✓ %s %s:%d running (PID: %d)\n", node.Type, node.Host, node.Port, status.PID)
+				started[node.SupervisorProgramName] = true
+				node.PID = status.PID
+			}
+		}
+		if len(started) < len(nodes) {
+			time.Sleep(nodeStartupPoll)
+		}
+	}
+
+	if failed := nodesNotRunning(nodes, supMgr.GetProcessStatus); len(failed) > 0 {
+		for _, failure := range failed {
+			fmt.Printf("  ✗ %s\n", failure)
+		}
+		return fmt.Errorf("%d of %d node(s) failed to start: %s", len(failed), len(nodes), strings.Join(failed, "; "))
+	}
+	return nil
 }

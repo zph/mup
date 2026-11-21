@@ -5,4 +5,4 @@ global:
 
 mongod_servers:
   - host: localhost
-    port: 27020
+    port: 47020

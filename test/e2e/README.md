@@ -48,7 +48,7 @@ make test-e2e-verbose
 # Run specific E2E test
 go test -v -tags=e2e ./test/e2e/ -run TestHelpCommand
 
-# Run all tests (unit + integration + E2E + SSH)
+# Run all tests (unit + integration + E2E)
 make test-complete
 ```
 
@@ -418,7 +418,6 @@ ls -la test/bin/
 - [ ] Performance benchmarking for E2E operations
 - [ ] Chaos testing with failure injection
 - [ ] Visual diff reporting for output changes
-- [ ] Docker-based E2E tests for SSH executors
 - [ ] Automated fixture generation from running clusters
 
 ## Related Documentation

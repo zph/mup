@@ -29,8 +29,7 @@ func TestIntegration_PlanStoreAndLocking(t *testing.T) {
 		Version:     "7.0.0",
 		Topology: &topology.Topology{
 			Global: topology.GlobalConfig{
-				User:    "test",
-				SSHPort: 22,
+				User: "test",
 			},
 			Mongod: []topology.MongodNode{
 				{Host: "localhost", Port: 27017},
@@ -150,32 +149,33 @@ func TestIntegration_LockRenewalDuringApply(t *testing.T) {
 	lockMgr, err := apply.NewLockManager(tmpDir)
 	require.NoError(t, err)
 
-	// Acquire lock with short timeout
-	lock, err := lockMgr.AcquireLock(clusterName, "plan-123", "deploy", 100*time.Millisecond)
+	// The lock and its extension are far longer than the test so scheduling
+	// delays can never expire it; only the renewal interval is short.
+	const (
+		lockLifetime  = time.Hour
+		renewInterval = 5 * time.Millisecond
+		renewDeadline = 10 * time.Second
+	)
+
+	lock, err := lockMgr.AcquireLock(clusterName, "plan-123", "deploy", lockLifetime)
 	require.NoError(t, err)
 
-	// Start automatic renewal
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	renewalStopped := lockMgr.StartLockRenewal(ctx, lock, renewInterval, lockLifetime)
 
-	lockMgr.StartLockRenewal(ctx, lock, 50*time.Millisecond, 100*time.Millisecond)
+	// Read the renew count from disk rather than the struct the renewal
+	// goroutine is mutating.
+	require.Eventually(t, func() bool {
+		current, err := lockMgr.GetLock(clusterName)
+		return err == nil && current.RenewCount > 0
+	}, renewDeadline, renewInterval, "lock should have been renewed at least once")
 
-	// Wait for renewals to happen
-	time.Sleep(120 * time.Millisecond)
-
-	// Verify lock was renewed multiple times
-	assert.Greater(t, lock.RenewCount, 0, "Lock should have been renewed at least once")
-	t.Logf("✅ Lock auto-renewed %d times", lock.RenewCount)
-
-	// Verify lock is still active (not expired despite short original timeout)
 	locked, err := lockMgr.IsLocked(clusterName)
 	require.NoError(t, err)
 	assert.True(t, locked, "Lock should still be active due to renewals")
-	t.Logf("✅ Lock still active after multiple renewals")
 
-	// Wait for context to complete
-	<-ctx.Done()
-	time.Sleep(10 * time.Millisecond)
+	cancel()
+	<-renewalStopped
 
 	// Cleanup
 	_ = lockMgr.ReleaseLock(clusterName, lock)
