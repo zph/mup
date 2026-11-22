@@ -106,7 +106,7 @@ os\.Remove.*
 
 ## CI/CD Integration
 
-The GitHub Actions workflow (`.github/workflows/lint.yml`) automatically runs:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs golangci-lint (v2, pinned) and the short unit tests with the race detector. The lint job runs:
 1. `golangci-lint` (includes go vet, errcheck, and other linters)
 
 All checks must pass for PRs to be merged.
