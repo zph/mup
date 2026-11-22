@@ -851,7 +851,7 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /Users/zph/.mup/monitoring/grafana/dashboards
+      path: /Users/user/.mup/monitoring/grafana/dashboards
       foldersFromFilesStructure: true
 ```
 

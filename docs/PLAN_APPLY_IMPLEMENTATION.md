@@ -577,7 +577,7 @@ End-to-end deployment verified:
 
 # Connect to cluster (using absolute path)
 ./bin/mup cluster connect test-apply
-# Executing: /Users/zph/.mup/storage/packages/mongo-7.0.0-darwin-arm64/bin/mongosh mongodb://localhost:29000
+# Executing: /Users/user/.mup/storage/packages/mongo-7.0.0-darwin-arm64/bin/mongosh mongodb://localhost:29000
 ✅ Connected successfully
 ```
 

@@ -296,7 +296,7 @@ Verified end-to-end deployment workflow:
 
 # Connect to cluster (using absolute path to mongosh)
 ./bin/mup cluster connect test-apply
-# Executing: /Users/zph/.mup/storage/packages/mongo-7.0.0-darwin-arm64/bin/mongosh mongodb://localhost:29000
+# Executing: /Users/user/.mup/storage/packages/mongo-7.0.0-darwin-arm64/bin/mongosh mongodb://localhost:29000
 # ✅ Connected successfully
 ```
 
@@ -1742,7 +1742,7 @@ if len(p.topology.ConfigSvr) > 0 || len(p.topology.Mongos) > 0 {
 **Problem**: System always tried to copy `mongosh` for all MongoDB versions, but supported MongoDB 3.6 deployments use the legacy `mongo` shell. This caused deployment failures for older versions:
 ```
 failed to copy mongosh: failed to read source file:
-open /Users/zph/.mup/storage/packages/mongo-3.6.23-darwin-amd64/bin/mongosh:
+open /Users/user/.mup/storage/packages/mongo-3.6.23-darwin-amd64/bin/mongosh:
 no such file or directory
 ```
 

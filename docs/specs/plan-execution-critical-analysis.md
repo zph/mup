@@ -207,7 +207,7 @@ func (h *StartProcessHandler) Validate(ctx context.Context, op *plan.PlannedOper
 ```
 Applying plan 4c243baf...
 
-[001/050] create_directory /Users/zph/.mup/storage/clusters/test-rs/v7.0
+[001/050] create_directory /Users/user/.mup/storage/clusters/test-rs/v7.0
   ✓ Validated
   ✓ Executed
 
@@ -556,13 +556,13 @@ func (g *DependencyGraph) GetExecutableBatch() []string {
 ```
 Phase: prepare
   Batch 1 (parallel):
-    - create_directory /Users/zph/.mup/storage/clusters/test-rs
-    - create_directory /Users/zph/.mup/storage/packages
+    - create_directory /Users/user/.mup/storage/clusters/test-rs
+    - create_directory /Users/user/.mup/storage/packages
   Batch 2 (parallel):
-    - create_directory /Users/zph/.mup/storage/clusters/test-rs/v7.0
+    - create_directory /Users/user/.mup/storage/clusters/test-rs/v7.0
     - download_binary mongod:7.0.0
   Batch 3:
-    - create_directory /Users/zph/.mup/storage/clusters/test-rs/v7.0/mongod-30000
+    - create_directory /Users/user/.mup/storage/clusters/test-rs/v7.0/mongod-30000
 
 Phase: deploy
   Batch 1:

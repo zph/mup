@@ -634,16 +634,16 @@ Test that resume with same plan ID successfully renews lock and continues.
       "description": "Create cluster base directory",
       "target": {
         "type": "filesystem",
-        "name": "/Users/zph/.mup/storage/clusters/test-rs/v7.0"
+        "name": "/Users/user/.mup/storage/clusters/test-rs/v7.0"
       },
       "params": {
-        "path": "/Users/zph/.mup/storage/clusters/test-rs/v7.0",
+        "path": "/Users/user/.mup/storage/clusters/test-rs/v7.0",
         "mode": 493
       },
       "changes": {
         "action": "create",
         "resource_type": "directory",
-        "resource_id": "/Users/zph/.mup/storage/clusters/test-rs/v7.0"
+        "resource_id": "/Users/user/.mup/storage/clusters/test-rs/v7.0"
       },
       "dependencies": [],
       "phase": "prepare"
@@ -657,7 +657,7 @@ Test that resume with same plan ID successfully renews lock and continues.
         "name": "supervisord"
       },
       "params": {
-        "cluster_dir": "/Users/zph/.mup/storage/clusters/test-rs/v7.0",
+        "cluster_dir": "/Users/user/.mup/storage/clusters/test-rs/v7.0",
         "cluster_name": "test-rs"
       },
       "changes": {
@@ -720,7 +720,7 @@ Test that resume with same plan ID successfully renews lock and continues.
 mup cluster deploy test-rs --plan
 
 # Output:
-# Plan generated: /Users/zph/.mup/storage/clusters/test-rs/plans/4c243baf-fde1-4440-b9d6-4cd6093978be.json
+# Plan generated: /Users/user/.mup/storage/clusters/test-rs/plans/4c243baf-fde1-4440-b9d6-4cd6093978be.json
 # Total operations: 50
 # - prepare: 25
 # - deploy: 15

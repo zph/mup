@@ -190,8 +190,8 @@ func TestConfigGenerator_ClusterRootCalculation(t *testing.T) {
 			description: "Standard Linux path",
 		},
 		{
-			versionDir:  "/Users/zph/.mup/storage/clusters/my-cluster/v8.0",
-			wantRoot:    "/Users/zph/.mup/storage/clusters/my-cluster",
+			versionDir:  "/Users/user/.mup/storage/clusters/my-cluster/v8.0",
+			wantRoot:    "/Users/user/.mup/storage/clusters/my-cluster",
 			description: "macOS path",
 		},
 	}
